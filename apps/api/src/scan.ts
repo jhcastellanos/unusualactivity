@@ -2,7 +2,16 @@ import type { DatabaseSync } from "node:sqlite";
 import type { UnusualContract } from "./cboe.js";
 import { fetchUnusualContracts } from "./cboe.js";
 import { dateTimeInNewYork } from "./domain.js";
-import { countVisibleContracts, getTradeWatermark, markScanFinished, upsertContracts } from "./neon.js";
+import {
+  countVisibleContracts,
+  getLastUpdatedAt,
+  markScanFinished,
+  releaseSweep,
+  rememberSavedSweep,
+  touchSweep,
+  tryAcquireSweep,
+  upsertContracts,
+} from "./neon.js";
 
 export type ScanStatus = {
   running: boolean;
@@ -14,6 +23,7 @@ export type ScanStatus = {
   startedAt: string | null;
   finishedAt: string | null;
   source: string;
+  phase: "saved" | "refresh" | "initial";
 };
 
 const status: ScanStatus = {
@@ -26,6 +36,7 @@ const status: ScanStatus = {
   startedAt: null,
   finishedAt: null,
   source: "cboe-delayed-quotes",
+  phase: "initial",
 };
 
 export function getScanStatus(): ScanStatus {
@@ -33,6 +44,23 @@ export function getScanStatus(): ScanStatus {
 }
 
 export const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+export async function adoptSavedScan(total: number): Promise<boolean> {
+  const visible = await countVisibleContracts();
+  const updated = await getLastUpdatedAt();
+  if (visible.count === 0 && !updated) return false;
+  if (!updated) await rememberSavedSweep(dateTimeInNewYork(new Date()));
+  status.running = false;
+  status.scanned = total;
+  status.total = total;
+  status.unusual = visible.count;
+  status.errors = 0;
+  status.current = [];
+  status.startedAt = null;
+  status.finishedAt = new Date().toISOString();
+  status.phase = "saved";
+  return true;
+}
 
 export function startUnusualScan(db: DatabaseSync, log: (message: string) => void): void {
   if (status.running) return;
@@ -43,24 +71,49 @@ export function startUnusualScan(db: DatabaseSync, log: (message: string) => voi
        ORDER BY in_sp500 DESC, ticker ASC`,
     )
     .all() as Array<{ ticker: string; inSp500: number; inNasdaq: number }>;
-  status.running = true;
-  status.scanned = 0;
-  status.total = symbols.length;
-  status.unusual = 0;
-  status.errors = 0;
-  status.current = [];
-  status.startedAt = new Date().toISOString();
-  status.finishedAt = null;
-  const scanId = status.startedAt;
-  void run(symbols, scanId, log);
+  void begin(db, symbols, log);
+}
+
+async function begin(
+  db: DatabaseSync,
+  symbols: Array<{ ticker: string; inSp500: number; inNasdaq: number }>,
+  log: (message: string) => void,
+): Promise<void> {
+  if (status.running) return;
+  const locked = await tryAcquireSweep();
+  if (!locked) {
+    log("sweep already running elsewhere; retrying shortly");
+    setTimeout(() => startUnusualScan(db, log), 20_000);
+    return;
+  }
+  try {
+    const visible = await countVisibleContracts();
+    status.running = true;
+    status.scanned = 0;
+    status.total = symbols.length;
+    status.unusual = visible.count;
+    status.errors = 0;
+    status.current = [];
+    status.startedAt = new Date().toISOString();
+    status.finishedAt = null;
+    status.phase = "initial";
+    await run(symbols, status.startedAt, null, log);
+  } catch (error) {
+    status.running = false;
+    status.current = [];
+    status.phase = status.unusual > 0 ? "saved" : "initial";
+    log(`sweep stopped: ${error instanceof Error ? error.message : "error"}`);
+  } finally {
+    if (!status.running) await releaseSweep();
+  }
 }
 
 async function run(
   symbols: Array<{ ticker: string; inSp500: number; inNasdaq: number }>,
   scanId: string,
+  watermark: string | null,
   log: (message: string) => void,
 ): Promise<void> {
-  const watermark = await getTradeWatermark();
   let cursor = 0;
   const inflight = new Set<string>();
   const publishCurrent = () => {
@@ -104,6 +157,7 @@ async function run(
         publishCurrent();
       }
       if (status.scanned % 25 === 0) {
+        await touchSweep();
         log(`scan ${status.scanned}/${status.total} unusual=${status.unusual} errors=${status.errors}`);
       }
       await sleep(120);
@@ -117,6 +171,7 @@ async function run(
   status.unusual = visible.count;
   status.running = false;
   status.finishedAt = new Date().toISOString();
+  status.phase = "saved";
   log(`scan finished unusual=${status.unusual} errors=${status.errors}`);
 }
 

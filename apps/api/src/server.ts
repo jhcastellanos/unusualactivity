@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { openDatabase, replaceSecurities } from "./db.js";
 import { loadSecurityUniverse } from "./symbols.js";
-import { getScanStatus, startUnusualScan, SWEEP_INTERVAL_MS } from "./scan.js";
+import { adoptSavedScan, getScanStatus, startUnusualScan, SWEEP_INTERVAL_MS } from "./scan.js";
 import { countVisibleContracts, getLastUpdatedAt, listActivity, migrateNeon, tickerFlow } from "./neon.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -161,6 +161,7 @@ app.get("/api/activity", async (request) => {
   const page = clampInt(query.page, 1, 10_000);
   const pageSize = [25, 50, 100, 250].includes(Number(query.pageSize)) ? Number(query.pageSize) : 100;
   const order = query.order === "asc" ? "ASC" : "DESC";
+  const order2 = query.order2 === "desc" ? "DESC" : "ASC";
   const listing = ["sp500", "nasdaq", "all"].includes(query.listing ?? "") ? (query.listing as string) : "all";
   const q = (query.q ?? "").trim().toUpperCase().slice(0, 12);
   const listed = await listActivity({
@@ -168,6 +169,8 @@ app.get("/api/activity", async (request) => {
     pageSize,
     sort: query.sort ?? "occurredAt",
     order,
+    sort2: query.sort2 ?? "",
+    order2,
     listing,
     q,
   });
@@ -177,6 +180,8 @@ app.get("/api/activity", async (request) => {
     total: listed.total,
     sort: listed.sort,
     order: order.toLowerCase(),
+    sort2: listed.sort2,
+    order2: order2.toLowerCase(),
     listing,
     q,
     rows: listed.rows,
@@ -211,5 +216,7 @@ try {
 
 await app.listen({ port: PORT, host: "127.0.0.1" });
 const logScan = (message: string) => app.log.info(message);
+const universe = db.prepare("SELECT COUNT(*) AS count FROM securities").get() as { count: number };
+await adoptSavedScan(universe.count);
 startUnusualScan(db, logScan);
 setInterval(() => startUnusualScan(db, logScan), SWEEP_INTERVAL_MS);

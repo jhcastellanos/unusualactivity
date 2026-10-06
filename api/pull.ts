@@ -40,15 +40,8 @@ function decorate(contract: UnusualContract, inSp500: number, inNasdaq: number):
     dte: daysToExpiration(contract.expiration, today),
     inSp500,
     inNasdaq,
-    estimatedPremium: premium(contract.volume, contract.last, contract.bid, contract.ask),
+    estimatedPremium: contract.estimatedPremium,
   };
-}
-
-function premium(volume: number | null, last: number | null, bid: number | null, ask: number | null): number | null {
-  if (volume == null) return null;
-  if (last != null) return volume * last * 100;
-  if (bid != null && ask != null) return (volume * (bid + ask)) / 2 * 100;
-  return null;
 }
 
 function plusMonths(day: string, months: number): string {

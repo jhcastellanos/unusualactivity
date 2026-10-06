@@ -11,6 +11,7 @@ type Scan = {
   unusual: number;
   errors: number;
   current?: string[];
+  phase?: "saved" | "refresh" | "initial";
 };
 
 type Status = {
@@ -47,7 +48,15 @@ type PageState = {
   pageSize: number;
   sort: string;
   order: Order;
+  sort2: string;
+  order2: Order;
   listing: Listing;
+};
+
+type Suggestion = {
+  ticker: string;
+  companyName: string;
+  exchange: string;
 };
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -58,12 +67,15 @@ function readState(): PageState {
   const pageSize = Number(url.searchParams.get("pageSize") ?? 100);
   const listing = url.searchParams.get("listing");
   const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
+  const order2 = url.searchParams.get("order2") === "desc" ? "desc" : "asc";
   return {
     q: url.searchParams.get("q") ?? "",
     page: Math.max(1, Number(url.searchParams.get("page") ?? 1) || 1),
     pageSize: PAGE_SIZES.includes(pageSize) ? pageSize : 100,
     sort: url.searchParams.get("sort") ?? "occurredAt",
     order,
+    sort2: url.searchParams.get("sort2") ?? "",
+    order2,
     listing: listing === "sp500" || listing === "nasdaq" ? listing : "all",
   };
 }
@@ -76,6 +88,10 @@ function writeUrl(state: PageState) {
   if (state.listing !== "all") params.set("listing", state.listing);
   if (state.sort !== "occurredAt") params.set("sort", state.sort);
   if (state.order !== "desc") params.set("order", state.order);
+  if (state.sort2) {
+    params.set("sort2", state.sort2);
+    params.set("order2", state.order2);
+  }
   const next = `/${params.size ? `?${params}` : ""}`;
   if (`${window.location.pathname}${window.location.search}` === next) return;
   window.history.pushState(null, "", next);
@@ -125,7 +141,9 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [bias, setBias] = useState<Bias | null>(null);
-  const hosted = import.meta.env.PROD;
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const hosted = false;
   const hostedBoard = useHostedBoard(hosted, state);
 
   useEffect(() => {
@@ -139,14 +157,26 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const query = draft.trim();
+    if (query.length < 1 || query === state.q) {
+      setSuggestions([]);
+      return;
+    }
+    const controller = new AbortController();
     const handle = window.setTimeout(() => {
-      if (draft === state.q) return;
-      const next = { ...state, q: draft.toUpperCase(), page: 1 };
-      setState(next);
-      writeUrl(next);
-    }, 300);
-    return () => window.clearTimeout(handle);
-  }, [draft, state]);
+      fetch(`/api/securities/search?q=${encodeURIComponent(query)}`, { signal: controller.signal })
+        .then((response) => response.json())
+        .then((body: { rows?: Suggestion[] }) => {
+          setSuggestions(body.rows ?? []);
+          setSuggestOpen(true);
+        })
+        .catch(() => undefined);
+    }, 180);
+    return () => {
+      controller.abort();
+      window.clearTimeout(handle);
+    };
+  }, [draft, state.q]);
 
   useEffect(() => {
     if (!state.q) {
@@ -204,6 +234,10 @@ export function App() {
         listing: state.listing,
         q: state.q,
       });
+      if (state.sort2) {
+        params.set("sort2", state.sort2);
+        params.set("order2", state.order2);
+      }
       fetch(`/api/activity?${params}`)
         .then((response) => {
           if (!response.ok) throw new Error("api");
@@ -254,9 +288,28 @@ export function App() {
     writeUrl(next);
   }
 
+  function chooseAsset(ticker: string) {
+    setSuggestOpen(false);
+    setSuggestions([]);
+    update({ q: ticker, page: 1 });
+  }
+
   function sortBy(column: string) {
-    const order: Order = state.sort === column && state.order === "desc" ? "asc" : "desc";
-    update({ sort: column, order, page: 1 });
+    const nextOrder = defaultOrder(column);
+    if (state.sort === column) {
+      update({ order: state.order === "desc" ? "asc" : "desc", page: 1 });
+      return;
+    }
+    if (state.sort2 === column) {
+      update({ order2: state.order2 === "desc" ? "asc" : "desc", page: 1 });
+      return;
+    }
+    const onDefault = state.sort === "occurredAt" && state.order === "desc" && !state.sort2;
+    if (onDefault) {
+      update({ sort: column, order: nextOrder, sort2: "", page: 1 });
+      return;
+    }
+    update({ sort2: column, order2: nextOrder, page: 1 });
   }
 
   const shownRows = hostedBoard?.rows ?? rows;
@@ -276,8 +329,8 @@ export function App() {
           <p className="eyebrow">Options Flow</p>
           <h1>Contratos inusuales</h1>
             <p className="note">
-            Contratos inusuales con prima de al menos $500,000, open interest mayor que cero y último trade de como máximo 6 meses.
-            Si la fecha de expiración ya pasó, el contrato no aparece. Cada 5 minutos se buscan trades nuevos desde la última actualización.
+            Se barren todos los activos. Entra un contrato si sigue abierto, el último trade es de los últimos 6 meses y la prima es de al menos $500,000.
+            La prima es la mayor entre el volumen de hoy y el open interest, por el precio, por 100. Si el vencimiento ya pasó, no aparece.
           </p>
         </div>
         <dl className="status">
@@ -309,9 +362,42 @@ export function App() {
       </nav>
 
       <form className="search" onSubmit={(event) => event.preventDefault()} role="search">
-        <label htmlFor="q">Filtrar ticker</label>
-        <input id="q" value={draft} autoComplete="off" placeholder="AAPL" onChange={(event) => setDraft(event.target.value.toUpperCase())} />
-        {draft && <button type="button" className="clear" onClick={() => update({ q: "", page: 1 })}>Limpiar</button>}
+        <label htmlFor="q">Activo</label>
+        <input
+          id="q"
+          value={draft}
+          autoComplete="off"
+          placeholder="Busca y elige un ticker, por ejemplo AAPL"
+          aria-expanded={suggestOpen && suggestions.length > 0}
+          aria-controls="asset-suggestions"
+          onChange={(event) => {
+            setDraft(event.target.value.toUpperCase());
+            setSuggestOpen(true);
+          }}
+          onFocus={() => setSuggestOpen(true)}
+        />
+        {(draft || state.q) && (
+          <button type="button" className="clear" onClick={() => { setSuggestOpen(false); update({ q: "", page: 1 }); }}>
+            Limpiar
+          </button>
+        )}
+        {suggestOpen && suggestions.length > 0 && (
+          <ul id="asset-suggestions" className="suggestions">
+            {suggestions.map((item) => (
+              <li key={item.ticker}>
+                <button type="button" onClick={() => chooseAsset(item.ticker)}>
+                  <strong>{item.ticker}</strong>
+                  <span>{item.companyName}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="search-help">
+          {state.q
+            ? `Activo elegido: ${state.q}. Abajo está el sesgo semanal y mensual de su flujo abierto.`
+            : "Elige un activo de la lista. Escribir solo no calcula el sesgo."}
+        </p>
       </form>
 
       <FlowRead ticker={state.q} bias={state.q ? bias : null} />
@@ -321,6 +407,7 @@ export function App() {
       <section className="panel" aria-busy={shownLoading}>
         <div className="panel-head">
           <p>{shownTotal === 0 ? "0 contratos" : `${start.toLocaleString("en-US")}–${end.toLocaleString("en-US")} de ${shownTotal.toLocaleString("en-US")}`}</p>
+          <p className="sort-hint">Primer clic ordena esa columna. El clic en otra columna queda como segundo orden.</p>
           <label>
             Filas
             <select value={state.pageSize} onChange={(event) => update({ pageSize: Number(event.target.value), page: 1 })}>
@@ -332,16 +419,16 @@ export function App() {
           <table>
             <thead>
               <tr>
-                <Sortable label="Hora" column="occurredAt" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="Ticker" column="ticker" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="Tipo" column="optionType" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="Strike" column="strike" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="Expiración" column="expiration" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="DTE" column="dte" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="Volumen" column="volume" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="OI" column="openInterest" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="Vol/OI" column="volumeOiRatio" sort={state.sort} order={state.order} onSort={sortBy} />
-                <Sortable label="Premium" column="estimatedPremium" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Hora" column="occurredAt" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="Ticker" column="ticker" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="Tipo" column="optionType" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="Strike" column="strike" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="Expiración" column="expiration" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="DTE" column="dte" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="Volumen" column="volume" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="OI" column="openInterest" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="Vol/OI" column="volumeOiRatio" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="Premium" column="estimatedPremium" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
               </tr>
             </thead>
             <tbody>
@@ -349,7 +436,7 @@ export function App() {
                 <tr key={row.id}>
                   <td className="when" title="Último trade de este contrato, hora del Este">{formatOccurred(row.occurredAt)}</td>
                   <td className="ticker">
-                    <button type="button" className="ticker-btn" onClick={() => update({ q: row.ticker, page: 1 })}>
+                    <button type="button" className="ticker-btn" onClick={() => chooseAsset(row.ticker)}>
                       {row.ticker}
                     </button>
                   </td>
@@ -360,7 +447,7 @@ export function App() {
                   <td className="num">{formatNumber(row.volume)}</td>
                   <td className="num">{formatNumber(row.openInterest)}</td>
                   <td className="num">{formatRatio(row.volumeOiRatio)}</td>
-                  <td className="num money" title="Volumen del día × precio de la opción × 100">{formatMoney(row.estimatedPremium)}</td>
+                  <td className="num money" title="La mayor entre el volumen de hoy y el open interest, por el precio de la opción, por 100">{formatMoney(row.estimatedPremium)}</td>
                 </tr>
               ))}
               {shownRows.length === 0 && (
@@ -408,33 +495,48 @@ const LEAN_LABEL: Record<BiasWindow["lean"], string> = {
 };
 
 function FlowRead({ ticker, bias }: { ticker: string; bias: Bias | null }) {
-  if (!ticker) {
-    return <p className="bias-prompt">Elige un ticker para ver si el flujo abierto se inclina a alza, baja o neutral en la semana y en el mes.</p>;
-  }
-  if (!bias || bias.ticker !== ticker) {
-    return <p className="bias-prompt">Leyendo el flujo abierto de {ticker}.</p>;
-  }
+  const ready = Boolean(ticker && bias && bias.ticker === ticker);
   return (
-    <section className="bias" aria-label={`Sesgo de ${ticker}`}>
-      <FlowCard title="Semanal" horizon="en los próximos 7 días" window={bias.weekly} />
-      <FlowCard title="Mensual" horizon="en los próximos 31 días" window={bias.monthly} />
-      <p className="bias-note">
-        {`${ticker}${bias.underlyingPrice != null ? ` · subyacente ${formatPrice(bias.underlyingPrice)}` : ""}. El sesgo es el peso de la prima inusual que sigue abierta, no una probabilidad de que el precio llegue ahí. No se distingue si el trade se compró o se vendió.`}
-      </p>
+    <section className="bias" aria-label={ticker ? `Sesgo de ${ticker}` : "Sesgo del activo"}>
+      <div className="bias-head">
+        <h2>{ticker ? ticker : "Sesgo del activo"}</h2>
+        <p>
+          {ticker && bias?.underlyingPrice != null ? `Subyacente ${formatPrice(bias.underlyingPrice)}. ` : ""}
+          Semanal: contratos que vencen en 7 días. Mensual: contratos que vencen en 31 días.
+          Es el peso de la prima abierta, no una probabilidad de precio.
+        </p>
+      </div>
+      <FlowCard title="Semanal" horizon="en los próximos 7 días" window={ready ? bias!.weekly : null} waiting={!ticker} />
+      <FlowCard title="Mensual" horizon="en los próximos 31 días" window={ready ? bias!.monthly : null} waiting={!ticker} />
     </section>
   );
 }
 
-function FlowCard({ title, horizon, window }: { title: string; horizon: string; window: BiasWindow }) {
-  const contracts = window.callContracts + window.putContracts;
+function FlowCard({
+  title,
+  horizon,
+  window,
+  waiting,
+}: {
+  title: string;
+  horizon: string;
+  window: BiasWindow | null;
+  waiting: boolean;
+}) {
+  const lean = window?.lean ?? "sin_flujo";
+  const contracts = window ? window.callContracts + window.putContracts : 0;
   return (
-    <article>
+    <article className={window ? lean : "waiting"}>
       <p className="bias-kicker">{title}</p>
-      <p className={`lean ${window.lean}`}>{LEAN_LABEL[window.lean]}</p>
+      <p className={`lean ${lean}`}>{window ? LEAN_LABEL[lean] : waiting ? "Sin activo" : "…"}</p>
       <p className="bias-detail">
-        {window.lean === "sin_flujo"
-          ? `No hay contratos inusuales abiertos que venzan ${horizon}.`
-          : `${formatMoney(window.callPremium)} en calls (${window.callContracts}) y ${formatMoney(window.putPremium)} en puts (${window.putContracts}). ${contracts} contratos que vencen ${horizon}.`}
+        {waiting
+          ? "Elige un activo para ver este sesgo."
+          : !window
+            ? "Calculando el flujo abierto."
+            : lean === "sin_flujo"
+              ? `No hay contratos inusuales abiertos que venzan ${horizon}.`
+              : `${formatMoney(window.callPremium)} en calls (${window.callContracts}) y ${formatMoney(window.putPremium)} en puts (${window.putContracts}). ${contracts} contratos que vencen ${horizon}.`}
       </p>
     </article>
   );
@@ -447,13 +549,20 @@ function ScanProgress({ scan }: { scan: Scan | undefined }) {
   const remaining = total > 0 ? Math.max(0, 100 - done) : 0;
   const current = scan?.current ?? [];
   const running = Boolean(scan?.running);
+  const saved = !running && (scan?.phase === "saved" || (total > 0 && scanned >= total));
   const label = !scan
     ? "Esperando el barrido"
     : running
-      ? current.length > 0
-        ? `Barriendo ${current.join(", ")}`
-        : "Barriendo"
-      : "Barrido listo";
+      ? scan.phase === "refresh"
+        ? current.length > 0
+          ? `Buscando trades nuevos en ${current.join(", ")}`
+          : "Buscando trades nuevos"
+        : current.length > 0
+          ? `Barriendo ${current.join(", ")}`
+          : "Barriendo"
+      : saved
+        ? "Datos guardados"
+        : "Barrido listo";
   const remainingLabel = total > 0 ? `falta ${remaining.toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%` : "—";
 
   return (
@@ -473,11 +582,23 @@ function ScanProgress({ scan }: { scan: Scan | undefined }) {
         <div className="progress-fill" style={{ width: `${done}%` }} />
       </div>
       <div className="progress-meta">
-        <span>{scanned.toLocaleString("en-US")} / {total.toLocaleString("en-US")} activos</span>
-        <span>extraído {done.toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%</span>
+        <span>
+          {saved
+            ? "La tabla muestra los contratos guardados"
+            : `${scanned.toLocaleString("en-US")} / ${total.toLocaleString("en-US")} activos`}
+        </span>
+        <span>
+          {saved
+            ? "listo para consultar"
+            : `extraído ${done.toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`}
+        </span>
       </div>
     </section>
   );
+}
+
+function defaultOrder(column: string): Order {
+  return column === "expiration" || column === "dte" || column === "ticker" || column === "optionType" ? "asc" : "desc";
 }
 
 function Sortable({
@@ -485,20 +606,27 @@ function Sortable({
   column,
   sort,
   order,
+  sort2,
+  order2,
   onSort,
 }: {
   label: string;
   column: string;
   sort: string;
   order: Order;
+  sort2: string;
+  order2: Order;
   onSort: (column: string) => void;
 }) {
-  const active = sort === column;
+  const rank = sort === column ? 1 : sort2 === column ? 2 : 0;
+  const direction = rank === 1 ? order : order2;
+  const two = Boolean(sort2);
   return (
     <th>
       <button type="button" onClick={() => onSort(column)}>
         {label}
-        {active ? (order === "desc" ? " ↓" : " ↑") : ""}
+        {rank ? (direction === "desc" ? " ↓" : " ↑") : ""}
+        {rank && two ? rank : ""}
       </button>
     </th>
   );

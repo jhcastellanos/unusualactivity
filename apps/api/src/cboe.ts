@@ -1,4 +1,4 @@
-import { daysToExpiration, estimatedPremium, isSizedOpenContract, parseOptionSymbol, todayInNewYork, volumeOiRatio } from "./domain.js";
+import { daysToExpiration, isSizedOpenContract, parseOptionSymbol, qualifyingPremium, todayInNewYork, volumeOiRatio } from "./domain.js";
 
 const SOURCE = "cboe-delayed-quotes";
 
@@ -92,7 +92,7 @@ export async function fetchUnusualContracts(ticker: string): Promise<UnusualCont
       ask,
       last,
       underlyingPrice,
-      estimatedPremium: estimatedPremium(volume, last, bid, ask),
+      estimatedPremium: qualifyingPremium(volume, openInterest, last, bid, ask),
       source: SOURCE,
     });
   }

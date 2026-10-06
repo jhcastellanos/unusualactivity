@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysToExpiration, estimatedPremium, flowLean, isSizedOpenContract, isUnusualContract, parseOptionSymbol, summarizeFlow, volumeOiRatio } from "./domain.ts";
+import { daysToExpiration, estimatedPremium, flowLean, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, summarizeFlow, volumeOiRatio } from "./domain.ts";
 
 describe("parseOptionSymbol", () => {
   it("reads expiration, call/put and strike from the OCC symbol", () => {
@@ -68,6 +68,41 @@ describe("sized open contracts", () => {
         new Date("2026-10-06T20:00:00Z"),
       ),
     ).toBe(true);
+  });
+
+  it("keeps an open position of at least $500,000 even when today's volume is smaller", () => {
+    expect(qualifyingPremium(91, 4_970, 21, 20.85, 21.15)).toBe(4_970 * 21 * 100);
+    expect(
+      isSizedOpenContract(
+        {
+          volume: 91,
+          openInterest: 4_970,
+          bid: 20.85,
+          ask: 21.15,
+          last: 21,
+          expiration: "2027-03-19",
+          occurredAt: "2026-10-06T15:32:34",
+        },
+        new Date("2026-10-06T20:00:00Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("drops a trade older than 6 months", () => {
+    expect(
+      isSizedOpenContract(
+        {
+          volume: 91,
+          openInterest: 4_970,
+          bid: null,
+          ask: null,
+          last: 21,
+          expiration: "2027-03-19",
+          occurredAt: "2026-01-06T15:32:34",
+        },
+        new Date("2026-10-06T20:00:00Z"),
+      ),
+    ).toBe(false);
   });
 
   it("drops a contract below $500,000 or already expired", () => {

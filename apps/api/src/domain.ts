@@ -127,6 +127,20 @@ export function estimatedPremium(
   return null;
 }
 
+export function qualifyingPremium(
+  volume: number | null,
+  openInterest: number | null,
+  last: number | null,
+  bid: number | null,
+  ask: number | null,
+): number | null {
+  const traded = estimatedPremium(volume, last, bid, ask);
+  const open = estimatedPremium(openInterest, last, bid, ask);
+  if (traded == null && open == null) return null;
+  const size = Math.max(traded ?? 0, open ?? 0);
+  return size >= MIN_UNUSUAL_SIZE ? size : null;
+}
+
 export function isSizedOpenContract(
   input: {
     volume: number | null;
@@ -139,8 +153,7 @@ export function isSizedOpenContract(
   },
   now = new Date(),
 ): boolean {
-  const size = estimatedPremium(input.volume, input.last, input.bid, input.ask);
-  if (size == null || size < MIN_UNUSUAL_SIZE) return false;
+  if (qualifyingPremium(input.volume, input.openInterest, input.last, input.bid, input.ask) == null) return false;
   if (input.openInterest == null || input.openInterest <= 0 || !input.occurredAt) return false;
   const today = todayInNewYork(now);
   if (input.expiration < today) return false;

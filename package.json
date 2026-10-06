@@ -1,6 +1,7 @@
 {
   "name": "unusualactivity",
   "private": true,
+  "type": "module",
   "workspaces": [
     "apps/*"
   ],

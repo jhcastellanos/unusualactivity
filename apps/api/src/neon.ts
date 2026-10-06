@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import pg from "pg";
 import type { UnusualContract } from "./cboe.js";
 import { dateTimeInNewYork, MIN_UNUSUAL_SIZE, plusMonths, summarizeFlow, todayInNewYork } from "./domain.js";
@@ -9,11 +10,14 @@ export type ActivityQuery = {
   pageSize: number;
   sort: string;
   order: "ASC" | "DESC";
+  sort2?: string;
+  order2?: "ASC" | "DESC";
   listing: string;
   q: string;
 };
 
 let pool: pg.Pool | null = null;
+const sweepOwner = randomUUID();
 
 export function getPool(): pg.Pool {
   if (pool) return pool;
@@ -57,6 +61,8 @@ export async function migrateNeon(): Promise<void> {
       trade_since TEXT
     )
   `);
+  await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_owner TEXT`);
+  await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_heartbeat TIMESTAMPTZ`);
   await db.query(`INSERT INTO scan_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
   await db.query(`CREATE INDEX IF NOT EXISTS unusual_contracts_occurred_at ON unusual_contracts (occurred_at DESC)`);
   await db.query(`CREATE INDEX IF NOT EXISTS unusual_contracts_ticker ON unusual_contracts (ticker)`);
@@ -76,7 +82,50 @@ export async function getLastUpdatedAt(): Promise<string | null> {
 }
 
 export async function markScanFinished(tradeSince: string): Promise<void> {
-  await getPool().query("UPDATE scan_state SET last_updated_at = NOW(), trade_since = $1 WHERE id = 1", [tradeSince]);
+  await getPool().query(
+    `UPDATE scan_state
+     SET last_updated_at = NOW(), trade_since = $1, sweep_owner = NULL, sweep_heartbeat = NULL
+     WHERE id = 1 AND (sweep_owner IS NULL OR sweep_owner = $2)`,
+    [tradeSince, sweepOwner],
+  );
+}
+
+export async function rememberSavedSweep(tradeSince: string): Promise<void> {
+  await getPool().query(
+    `UPDATE scan_state
+     SET last_updated_at = COALESCE(last_updated_at, NOW()),
+         trade_since = COALESCE(trade_since, $1)
+     WHERE id = 1`,
+    [tradeSince],
+  );
+}
+
+export async function tryAcquireSweep(): Promise<boolean> {
+  const result = await getPool().query(
+    `UPDATE scan_state
+     SET sweep_owner = $1, sweep_heartbeat = NOW()
+     WHERE id = 1
+       AND (
+         sweep_owner IS NULL
+         OR sweep_owner = $1
+         OR sweep_heartbeat IS NULL
+         OR sweep_heartbeat < NOW() - INTERVAL '90 seconds'
+       )
+     RETURNING id`,
+    [sweepOwner],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function touchSweep(): Promise<void> {
+  await getPool().query("UPDATE scan_state SET sweep_heartbeat = NOW() WHERE id = 1 AND sweep_owner = $1", [sweepOwner]);
+}
+
+export async function releaseSweep(): Promise<void> {
+  await getPool().query(
+    "UPDATE scan_state SET sweep_owner = NULL, sweep_heartbeat = NULL WHERE id = 1 AND sweep_owner = $1",
+    [sweepOwner],
+  );
 }
 
 export async function countVisibleContracts(): Promise<{ count: number; last: string | null }> {
@@ -96,9 +145,9 @@ export async function upsertContracts(
   scanId: string,
   watermark: string | null,
 ): Promise<void> {
+  void watermark;
   const fresh = contracts.filter((contract) => {
     if (!contract.occurredAt) return false;
-    if (watermark && contract.occurredAt < watermark) return false;
     return (contract.estimatedPremium ?? 0) >= MIN_UNUSUAL_SIZE;
   });
   if (fresh.length === 0) return;
@@ -186,10 +235,13 @@ const SORTS: Record<string, string> = {
   last: "last",
 };
 
-export async function listActivity(query: ActivityQuery): Promise<{ total: number; rows: unknown[]; sort: string }> {
+export async function listActivity(query: ActivityQuery): Promise<{ total: number; rows: unknown[]; sort: string; sort2: string }> {
   const sort = SORTS[query.sort] ? query.sort : "occurredAt";
   const column = SORTS[sort] ?? "occurred_at";
   const order = query.order === "ASC" ? "ASC" : "DESC";
+  const sort2 = query.sort2 && SORTS[query.sort2] && query.sort2 !== sort ? query.sort2 : "";
+  const column2 = sort2 ? SORTS[sort2] : "";
+  const order2 = query.order2 === "DESC" ? "DESC" : "ASC";
   const params: Array<string | number> = [];
   const filters = visibleFilter(params);
   if (query.listing === "sp500") {
@@ -215,11 +267,11 @@ export async function listActivity(query: ActivityQuery): Promise<{ total: numbe
             underlying_price AS "underlyingPrice", source
      FROM unusual_contracts
      ${where}
-     ORDER BY ${column} ${order} NULLS LAST, ticker ASC
+     ORDER BY ${column} ${order} NULLS LAST${column2 ? `, ${column2} ${order2} NULLS LAST` : ""}, ticker ASC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
-  return { total: Number(total.rows[0]?.count ?? 0), rows: rows.rows, sort };
+  return { total: Number(total.rows[0]?.count ?? 0), rows: rows.rows, sort, sort2 };
 }
 
 export async function tickerFlow(ticker: string): Promise<{
