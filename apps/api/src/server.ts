@@ -161,7 +161,6 @@ app.get("/api/activity", async (request) => {
   const page = clampInt(query.page, 1, 10_000);
   const pageSize = [25, 50, 100, 250].includes(Number(query.pageSize)) ? Number(query.pageSize) : 100;
   const order = query.order === "asc" ? "ASC" : "DESC";
-  const order2 = query.order2 === "desc" ? "DESC" : "ASC";
   const listing = ["sp500", "nasdaq", "all"].includes(query.listing ?? "") ? (query.listing as string) : "all";
   const q = (query.q ?? "").trim().toUpperCase().slice(0, 12);
   const listed = await listActivity({
@@ -169,8 +168,6 @@ app.get("/api/activity", async (request) => {
     pageSize,
     sort: query.sort ?? "occurredAt",
     order,
-    sort2: query.sort2 ?? "",
-    order2,
     listing,
     q,
   });
@@ -180,8 +177,6 @@ app.get("/api/activity", async (request) => {
     total: listed.total,
     sort: listed.sort,
     order: order.toLowerCase(),
-    sort2: listed.sort2,
-    order2: order2.toLowerCase(),
     listing,
     q,
     rows: listed.rows,

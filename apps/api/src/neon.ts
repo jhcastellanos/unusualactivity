@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import type { UnusualContract } from "./cboe.js";
-import { dateTimeInNewYork, MIN_UNUSUAL_SIZE, plusMonths, summarizeFlow, todayInNewYork } from "./domain.js";
+import { dateTimeInNewYork, DAY_UNUSUAL_VOLUME_RATIO, MIN_UNUSUAL_SIZE, plusMonths, summarizeFlow, todayInNewYork } from "./domain.js";
 
 const { Pool } = pg;
 
@@ -10,8 +10,6 @@ export type ActivityQuery = {
   pageSize: number;
   sort: string;
   order: "ASC" | "DESC";
-  sort2?: string;
-  order2?: "ASC" | "DESC";
   listing: string;
   q: string;
 };
@@ -235,13 +233,10 @@ const SORTS: Record<string, string> = {
   last: "last",
 };
 
-export async function listActivity(query: ActivityQuery): Promise<{ total: number; rows: unknown[]; sort: string; sort2: string }> {
+export async function listActivity(query: ActivityQuery): Promise<{ total: number; rows: unknown[]; sort: string }> {
   const sort = SORTS[query.sort] ? query.sort : "occurredAt";
   const column = SORTS[sort] ?? "occurred_at";
   const order = query.order === "ASC" ? "ASC" : "DESC";
-  const sort2 = query.sort2 && SORTS[query.sort2] && query.sort2 !== sort ? query.sort2 : "";
-  const column2 = sort2 ? SORTS[sort2] : "";
-  const order2 = query.order2 === "DESC" ? "DESC" : "ASC";
   const params: Array<string | number> = [];
   const filters = visibleFilter(params);
   if (query.listing === "sp500") {
@@ -264,14 +259,17 @@ export async function listActivity(query: ActivityQuery): Promise<{ total: numbe
             option_type AS "optionType", direction, strike, expiration, dte, volume,
             open_interest AS "openInterest", volume_oi_ratio AS "volumeOiRatio",
             estimated_premium AS "estimatedPremium", bid, ask, last,
-            underlying_price AS "underlyingPrice", source
+            underlying_price AS "underlyingPrice", source,
+            (volume_oi_ratio >= ${DAY_UNUSUAL_VOLUME_RATIO}) AS "dayUnusual"
      FROM unusual_contracts
      ${where}
-     ORDER BY ${column} ${order} NULLS LAST${column2 ? `, ${column2} ${order2} NULLS LAST` : ""}, ticker ASC
+     ORDER BY CASE WHEN volume_oi_ratio >= ${DAY_UNUSUAL_VOLUME_RATIO} THEN 0 ELSE 1 END,
+              CASE WHEN volume_oi_ratio >= ${DAY_UNUSUAL_VOLUME_RATIO} THEN volume_oi_ratio END DESC NULLS LAST,
+              ${column} ${order} NULLS LAST, ticker ASC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
-  return { total: Number(total.rows[0]?.count ?? 0), rows: rows.rows, sort, sort2 };
+  return { total: Number(total.rows[0]?.count ?? 0), rows: rows.rows, sort };
 }
 
 export async function tickerFlow(ticker: string): Promise<{

@@ -25,6 +25,12 @@ export function volumeOiRatio(volume: number | null, openInterest: number | null
   return volume / openInterest;
 }
 
+export const DAY_UNUSUAL_VOLUME_RATIO = 2;
+
+export function isDayUnusualVolume(volumeOiRatio: number | null): boolean {
+  return volumeOiRatio != null && Number.isFinite(volumeOiRatio) && volumeOiRatio >= DAY_UNUSUAL_VOLUME_RATIO;
+}
+
 export const MIN_UNUSUAL_SIZE = 500_000;
 
 export function plusMonths(day: string, months: number): string {

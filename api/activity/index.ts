@@ -6,7 +6,6 @@ export async function GET(request: Request): Promise<Response> {
   const pageSize = [25, 50, 100, 250].includes(pageSizeRaw) ? pageSizeRaw : 100;
   const page = Math.min(10_000, Math.max(1, Number(url.searchParams.get("page")) || 1));
   const order = url.searchParams.get("order") === "asc" ? "ASC" : "DESC";
-  const order2 = url.searchParams.get("order2") === "desc" ? "DESC" : "ASC";
   const listingParam = url.searchParams.get("listing") ?? "all";
   const listing = listingParam === "sp500" || listingParam === "nasdaq" ? listingParam : "all";
   const q = (url.searchParams.get("q") ?? "").trim().toUpperCase().slice(0, 12);
@@ -16,8 +15,6 @@ export async function GET(request: Request): Promise<Response> {
       pageSize,
       sort: url.searchParams.get("sort") ?? "occurredAt",
       order,
-      sort2: url.searchParams.get("sort2") ?? "",
-      order2,
       listing,
       q,
     });
@@ -27,8 +24,6 @@ export async function GET(request: Request): Promise<Response> {
       total: listed.total,
       sort: listed.sort,
       order: order.toLowerCase(),
-      sort2: listed.sort2,
-      order2: order2.toLowerCase(),
       listing,
       q,
       rows: listed.rows,

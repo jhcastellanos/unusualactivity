@@ -35,6 +35,7 @@ type Contract = {
   volume: number | null;
   openInterest: number | null;
   volumeOiRatio: number | null;
+  dayUnusual?: boolean;
   bid: number | null;
   ask: number | null;
   last: number | null;
@@ -48,8 +49,6 @@ type PageState = {
   pageSize: number;
   sort: string;
   order: Order;
-  sort2: string;
-  order2: Order;
   listing: Listing;
 };
 
@@ -67,15 +66,12 @@ function readState(): PageState {
   const pageSize = Number(url.searchParams.get("pageSize") ?? 100);
   const listing = url.searchParams.get("listing");
   const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
-  const order2 = url.searchParams.get("order2") === "desc" ? "desc" : "asc";
   return {
     q: url.searchParams.get("q") ?? "",
     page: Math.max(1, Number(url.searchParams.get("page") ?? 1) || 1),
     pageSize: PAGE_SIZES.includes(pageSize) ? pageSize : 100,
     sort: url.searchParams.get("sort") ?? "occurredAt",
     order,
-    sort2: url.searchParams.get("sort2") ?? "",
-    order2,
     listing: listing === "sp500" || listing === "nasdaq" ? listing : "all",
   };
 }
@@ -88,10 +84,6 @@ function writeUrl(state: PageState) {
   if (state.listing !== "all") params.set("listing", state.listing);
   if (state.sort !== "occurredAt") params.set("sort", state.sort);
   if (state.order !== "desc") params.set("order", state.order);
-  if (state.sort2) {
-    params.set("sort2", state.sort2);
-    params.set("order2", state.order2);
-  }
   const next = `/${params.size ? `?${params}` : ""}`;
   if (`${window.location.pathname}${window.location.search}` === next) return;
   window.history.pushState(null, "", next);
@@ -236,10 +228,6 @@ export function App() {
         listing: state.listing,
         q: state.q,
       });
-      if (state.sort2) {
-        params.set("sort2", state.sort2);
-        params.set("order2", state.order2);
-      }
       fetch(`/api/activity?${params}`)
         .then((response) => {
           if (!response.ok) throw new Error("api");
@@ -311,21 +299,11 @@ export function App() {
   }
 
   function sortBy(column: string) {
-    const nextOrder = defaultOrder(column);
     if (state.sort === column) {
       update({ order: state.order === "desc" ? "asc" : "desc", page: 1 });
       return;
     }
-    if (state.sort2 === column) {
-      update({ order2: state.order2 === "desc" ? "asc" : "desc", page: 1 });
-      return;
-    }
-    const onDefault = state.sort === "occurredAt" && state.order === "desc" && !state.sort2;
-    if (onDefault) {
-      update({ sort: column, order: nextOrder, sort2: "", page: 1 });
-      return;
-    }
-    update({ sort2: column, order2: nextOrder, page: 1 });
+    update({ sort: column, order: defaultOrder(column), page: 1 });
   }
 
   const shownRows = hostedBoard?.rows ?? rows;
@@ -347,6 +325,7 @@ export function App() {
             <p className="note">
             Se barren todos los activos. Entra un contrato si sigue abierto, el último trade es de los últimos 6 meses y la prima es de al menos $500,000.
             La prima es la mayor entre el volumen de hoy y el open interest, por el precio, por 100. Si el vencimiento ya pasó, no aparece.
+            Una fila marcada negoció hoy al menos el doble de su open interest. Esas filas salen primero y después sigue el resto.
           </p>
         </div>
         <dl className="status">
@@ -423,7 +402,7 @@ export function App() {
       <section className="panel" aria-busy={shownLoading}>
         <div className="panel-head">
           <p>{shownTotal === 0 ? "0 contratos" : `${start.toLocaleString("en-US")}–${end.toLocaleString("en-US")} de ${shownTotal.toLocaleString("en-US")}`}</p>
-          <p className="sort-hint">Primer clic ordena esa columna. El clic en otra columna queda como segundo orden.</p>
+          <p className="sort-hint">Un clic ordena solo esa columna. Otro clic en otra columna reemplaza el orden. Las filas del día siguen primero.</p>
           <label>
             Filas
             <select value={state.pageSize} onChange={(event) => update({ pageSize: Number(event.target.value), page: 1 })}>
@@ -436,21 +415,22 @@ export function App() {
           <table>
             <thead>
               <tr>
-                <Sortable label="Hora" column="occurredAt" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="Ticker" column="ticker" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="Tipo" column="optionType" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="Strike" column="strike" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="Expiración" column="expiration" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="DTE" column="dte" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="Volumen" column="volume" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="OI" column="openInterest" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="Vol/OI" column="volumeOiRatio" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
-                <Sortable label="Premium" column="estimatedPremium" sort={state.sort} order={state.order} sort2={state.sort2} order2={state.order2} onSort={sortBy} />
+                <Sortable label="Hora" column="occurredAt" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Ticker" column="ticker" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Tipo" column="optionType" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Strike" column="strike" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Expiración" column="expiration" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="DTE" column="dte" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Volumen" column="volume" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="OI" column="openInterest" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Vol/OI" column="volumeOiRatio" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Último precio" column="last" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable label="Premium" column="estimatedPremium" sort={state.sort} order={state.order} onSort={sortBy} />
               </tr>
             </thead>
             <tbody>
               {shownRows.map((row) => (
-                <tr key={row.id}>
+                <tr key={row.id} className={row.dayUnusual ? "day-unusual" : undefined}>
                   <td className="when" title="Último trade de este contrato, hora del Este">{formatOccurred(row.occurredAt)}</td>
                   <td className="ticker">
                     <button type="button" className="ticker-btn" onClick={() => chooseAsset(row.ticker)}>
@@ -461,15 +441,19 @@ export function App() {
                   <td className="num">{formatPrice(row.strike)}</td>
                   <td>{formatExpiration(row.expiration)}</td>
                   <td className="num">{row.dte ?? "—"}</td>
-                  <td className="num">{formatNumber(row.volume)}</td>
+                  <td className="num volume" title={row.dayUnusual ? "Hoy se negoció al menos el doble del open interest de este contrato." : undefined}>
+                    {formatNumber(row.volume)}
+                    {row.dayUnusual ? <span className="day-mark">Día</span> : null}
+                  </td>
                   <td className="num">{formatNumber(row.openInterest)}</td>
-                  <td className="num">{formatRatio(row.volumeOiRatio)}</td>
+                  <td className="num ratio">{formatRatio(row.volumeOiRatio)}</td>
+                  <td className="num" title="Precio del último trade de este contrato">{formatPrice(row.last)}</td>
                   <td className="num money" title="La mayor entre el volumen de hoy y el open interest, por el precio de la opción, por 100">{formatMoney(row.estimatedPremium)}</td>
                 </tr>
               ))}
               {shownRows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="empty">
+                  <td colSpan={11} className="empty">
                     {shownLoading || scan?.running
                       ? "Cargando contratos inusuales abiertos de al menos $500,000."
                       : "Ningún contrato abierto de al menos $500,000 con un trade de los últimos 6 meses."}
@@ -639,27 +623,20 @@ function Sortable({
   column,
   sort,
   order,
-  sort2,
-  order2,
   onSort,
 }: {
   label: string;
   column: string;
   sort: string;
   order: Order;
-  sort2: string;
-  order2: Order;
   onSort: (column: string) => void;
 }) {
-  const rank = sort === column ? 1 : sort2 === column ? 2 : 0;
-  const direction = rank === 1 ? order : order2;
-  const two = Boolean(sort2);
+  const active = sort === column;
   return (
     <th>
-      <button type="button" onClick={() => onSort(column)}>
+      <button type="button" onClick={() => onSort(column)} aria-pressed={active}>
         {label}
-        {rank ? (direction === "desc" ? " ↓" : " ↑") : ""}
-        {rank && two ? rank : ""}
+        {active ? (order === "desc" ? " ↓" : " ↑") : ""}
       </button>
     </th>
   );

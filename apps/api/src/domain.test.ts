@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysToExpiration, estimatedPremium, flowLean, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, summarizeFlow, volumeOiRatio } from "./domain.ts";
+import { daysToExpiration, estimatedPremium, flowLean, isDayUnusualVolume, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, summarizeFlow, volumeOiRatio } from "./domain.ts";
 
 describe("parseOptionSymbol", () => {
   it("reads expiration, call/put and strike from the OCC symbol", () => {
@@ -30,6 +30,19 @@ describe("volumeOiRatio", () => {
     expect(volumeOiRatio(100, null)).toBeNull();
     expect(volumeOiRatio(100, 0)).toBeNull();
     expect(volumeOiRatio(null, 10)).toBeNull();
+  });
+});
+
+describe("isDayUnusualVolume", () => {
+  it("marks today's volume at least twice the open interest", () => {
+    expect(isDayUnusualVolume(2)).toBe(true);
+    expect(isDayUnusualVolume(34.39)).toBe(true);
+  });
+
+  it("leaves a quiet contract unmarked", () => {
+    expect(isDayUnusualVolume(1.99)).toBe(false);
+    expect(isDayUnusualVolume(0)).toBe(false);
+    expect(isDayUnusualVolume(null)).toBe(false);
   });
 });
 

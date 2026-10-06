@@ -244,6 +244,25 @@ th button {
   white-space: nowrap;
 }
 tbody tr:hover { background: var(--bg-hover); }
+tbody tr.day-unusual {
+  background: #221e17;
+  box-shadow: inset 3px 0 0 var(--neutral);
+}
+tbody tr.day-unusual:hover { background: #2a261c; }
+tbody tr.day-unusual .ratio { color: var(--neutral); font-weight: 650; }
+.day-mark {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--neutral);
+  border-radius: 999px;
+  color: var(--neutral);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
 .ticker {
   font-family: "SF Mono", ui-monospace, Menlo, monospace;
   font-weight: 650;
