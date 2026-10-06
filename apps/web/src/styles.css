@@ -1,24 +1,24 @@
 :root {
-  color-scheme: dark;
-  --bg: #0e1116;
-  --bg-raise: #161b22;
-  --bg-hover: #1c2430;
-  --line: #2c3644;
-  --text: #e6ebf2;
-  --muted: #8d98a8;
-  --accent: #9aafc6;
-  --up: #3cbe8b;
-  --down: #e06a74;
-  --neutral: #c6b48a;
-  --sp: #9aafc6;
-  --nasdaq: #8aa0b8;
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-raise: #ffffff;
+  --bg-hover: #f3f5f8;
+  --line: #d7dee6;
+  --text: #1c2430;
+  --muted: #5e6b7a;
+  --accent: #3d5570;
+  --up: #0b7a4b;
+  --down: #c23842;
+  --neutral: #8a5a00;
+  --sp: #3d5570;
+  --nasdaq: #4a6278;
   font-family: "Avenir Next", "Segoe UI", sans-serif;
-  background: var(--bg);
+  background: #ffffff;
   color: var(--text);
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; }
+html, body { margin: 0; background: #ffffff; }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 
@@ -110,9 +110,9 @@ dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
   padding: 8px 14px;
 }
 .switch button.on {
-  background: #d7dee8;
-  color: #12161c;
-  border-color: #d7dee8;
+  background: #1c2430;
+  color: #ffffff;
+  border-color: #1c2430;
 }
 .switch span {
   margin-left: 8px;
@@ -159,7 +159,7 @@ dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
   background: var(--bg-raise);
   border: 1px solid var(--line);
   border-radius: 12px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 32px rgba(28, 36, 48, 0.12);
 }
 .suggestions button {
   width: 100%;
@@ -181,8 +181,9 @@ dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
 .suggestions span { color: var(--muted); }
 
 .banner {
-  background: #2a2418;
-  border: 1px solid #6e6248;
+  background: #fff6e0;
+  border: 1px solid #e0b15a;
+  color: #1c2430;
   padding: 12px 14px;
   border-radius: 12px;
 }
@@ -245,22 +246,22 @@ th button {
 }
 tbody tr:hover { background: var(--bg-hover); }
 tbody tr.day-unusual {
-  background: #221e17;
-  box-shadow: inset 3px 0 0 var(--neutral);
+  background: #ffe08a;
+  box-shadow: inset 4px 0 0 #c48400;
 }
-tbody tr.day-unusual:hover { background: #2a261c; }
-tbody tr.day-unusual .ratio { color: var(--neutral); font-weight: 650; }
+tbody tr.day-unusual:hover { background: #ffd15a; }
+tbody tr.day-unusual .ratio { color: #7a4e00; font-weight: 700; }
 .day-mark {
   display: inline-block;
   margin-left: 8px;
-  padding: 1px 6px;
-  border: 1px solid var(--neutral);
+  padding: 2px 7px;
+  border: 0;
   border-radius: 999px;
-  color: var(--neutral);
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  background: #c48400;
+  color: #1c1400;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   vertical-align: 1px;
 }
 .ticker {

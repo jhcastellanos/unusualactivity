@@ -325,7 +325,7 @@ export function App() {
             <p className="note">
             Se barren todos los activos. Entra un contrato si sigue abierto, el último trade es de los últimos 6 meses y la prima es de al menos $500,000.
             La prima es la mayor entre el volumen de hoy y el open interest, por el precio, por 100. Si el vencimiento ya pasó, no aparece.
-            Una fila marcada negoció hoy al menos el doble de su open interest. Esas filas salen primero y después sigue el resto.
+            La marca 2× OI significa que hoy se negoció al menos el doble del open interest de ese contrato. Esas filas van en amarillo y salen primero.
           </p>
         </div>
         <dl className="status">
@@ -443,7 +443,7 @@ export function App() {
                   <td className="num">{row.dte ?? "—"}</td>
                   <td className="num volume" title={row.dayUnusual ? "Hoy se negoció al menos el doble del open interest de este contrato." : undefined}>
                     {formatNumber(row.volume)}
-                    {row.dayUnusual ? <span className="day-mark">Día</span> : null}
+                    {row.dayUnusual ? <span className="day-mark">2× OI</span> : null}
                   </td>
                   <td className="num">{formatNumber(row.openInterest)}</td>
                   <td className="num ratio">{formatRatio(row.volumeOiRatio)}</td>
