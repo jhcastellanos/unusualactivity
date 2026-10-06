@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { useHostedBoard } from "./hosted";
 
 type Listing = "all" | "sp500" | "nasdaq";
@@ -133,6 +133,8 @@ function formatMoney(value: number | null): string {
 }
 
 export function App() {
+  const tableTop = useRef<HTMLDivElement>(null);
+  const scrollToTable = useRef(false);
   const [state, setState] = useState<PageState>(readState);
   const [draft, setDraft] = useState(state.q);
   const [status, setStatus] = useState<Status | null>(null);
@@ -288,6 +290,20 @@ export function App() {
     writeUrl(next);
   }
 
+  useEffect(() => {
+    if (!scrollToTable.current) return;
+    scrollToTable.current = false;
+    tableTop.current?.scrollIntoView({ block: "start" });
+    tableTop.current?.focus({ preventScroll: true });
+  }, [state.page]);
+
+  function changePage(page: number) {
+    if (page === state.page) return;
+    scrollToTable.current = true;
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    update({ page });
+  }
+
   function chooseAsset(ticker: string) {
     setSuggestOpen(false);
     setSuggestions([]);
@@ -415,6 +431,7 @@ export function App() {
             </select>
           </label>
         </div>
+        <Pager page={state.page} pageCount={pageCount} onPage={changePage} anchor={tableTop} />
         <div className="table-wrap">
           <table>
             <thead>
@@ -462,12 +479,28 @@ export function App() {
             </tbody>
           </table>
         </div>
-        <div className="pager">
-          <button type="button" disabled={state.page <= 1} onClick={() => update({ page: state.page - 1 })}>Anterior</button>
-          <span>Página {Math.min(state.page, pageCount)} de {pageCount.toLocaleString("en-US")}</span>
-          <button type="button" disabled={state.page >= pageCount} onClick={() => update({ page: state.page + 1 })}>Siguiente</button>
-        </div>
+        <Pager page={state.page} pageCount={pageCount} onPage={changePage} />
       </section>
+    </div>
+  );
+}
+
+function Pager({
+  page,
+  pageCount,
+  onPage,
+  anchor,
+}: {
+  page: number;
+  pageCount: number;
+  onPage: (page: number) => void;
+  anchor?: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <div className={anchor ? "pager pager-top" : "pager"} ref={anchor} tabIndex={anchor ? -1 : undefined}>
+      <button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)}>Anterior</button>
+      <span>Página {Math.min(page, pageCount)} de {pageCount.toLocaleString("en-US")}</span>
+      <button type="button" disabled={page >= pageCount} onClick={() => onPage(page + 1)}>Siguiente</button>
     </div>
   );
 }
