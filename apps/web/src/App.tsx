@@ -297,6 +297,14 @@ export function App() {
     update({ page });
   }
 
+  const [stopping, setStopping] = useState(false);
+
+  useEffect(() => {
+    if (!stopping || !status || status.scan.running) return;
+    setStopping(false);
+    setRefreshNote("Actualización detenida.");
+  }, [stopping, status]);
+
   async function refreshAll() {
     setRefreshNote(null);
     const response = await fetch("/api/scan", { method: "POST" });
@@ -309,6 +317,7 @@ export function App() {
       setRefreshNote("Ya hay una actualización en curso.");
       return;
     }
+    setStopping(false);
     if (body.running) {
       setStatus((current) => current ? {
         ...current,
@@ -320,6 +329,24 @@ export function App() {
         },
       } : current);
     }
+  }
+
+  async function stopAll() {
+    setStopping(true);
+    setRefreshNote(null);
+    const response = await fetch("/api/scan/stop", { method: "POST" });
+    const body = (await response.json().catch(() => null)) as { error?: string; stopping?: boolean } | null;
+    if (!response.ok) {
+      setStopping(false);
+      setRefreshNote(body?.error ?? "No pude parar la actualización.");
+      return;
+    }
+    if (!body?.stopping) {
+      setStopping(false);
+      setRefreshNote("No hay una actualización en curso.");
+      return;
+    }
+    setRefreshNote("Parando la actualización.");
   }
 
   function chooseAsset(ticker: string) {
@@ -379,7 +406,7 @@ export function App() {
         </dl>
       </header>
 
-      <ScanProgress scan={scan} note={refreshNote} onRefresh={() => void refreshAll()} />
+      <ScanProgress scan={scan} note={refreshNote} stopping={stopping} onRefresh={() => void refreshAll()} onStop={() => void stopAll()} />
 
       <nav className="switch" aria-label="Universo">
         <button type="button" className={state.listing === "all" ? "on" : ""} onClick={() => update({ listing: "all", page: 1 })}>Todos</button>
@@ -699,7 +726,19 @@ function FlowCard({
   );
 }
 
-function ScanProgress({ scan, note, onRefresh }: { scan: Scan | undefined; note: string | null; onRefresh: () => void }) {
+function ScanProgress({
+  scan,
+  note,
+  stopping,
+  onRefresh,
+  onStop,
+}: {
+  scan: Scan | undefined;
+  note: string | null;
+  stopping: boolean;
+  onRefresh: () => void;
+  onStop: () => void;
+}) {
   const scanned = scan?.scanned ?? 0;
   const total = scan?.total ?? 0;
   const done = total > 0 ? Math.min(100, (scanned / total) * 100) : 0;
@@ -744,9 +783,16 @@ function ScanProgress({ scan, note, onRefresh }: { scan: Scan | undefined; note:
             ? "La tabla muestra los contratos guardados"
             : `${scanned.toLocaleString("en-US")} / ${total.toLocaleString("en-US")} activos`}
         </span>
-        <button type="button" className="refresh" onClick={onRefresh} disabled={running}>
-          {running ? "Actualizando activos" : "Actualizar activos"}
-        </button>
+        <span className="refresh-actions">
+          <button type="button" className="refresh" onClick={onRefresh} disabled={running || stopping}>
+            {running || stopping ? "Actualizando activos" : "Actualizar activos"}
+          </button>
+          {(running || stopping) && (
+            <button type="button" className="stop" onClick={onStop} disabled={stopping}>
+              {stopping ? "Parando actualización" : "Parar actualización"}
+            </button>
+          )}
+        </span>
         <span>
           {saved
             ? "listo para consultar"

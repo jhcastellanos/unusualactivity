@@ -64,9 +64,30 @@ export async function adoptSavedScan(total: number): Promise<boolean> {
 }
 
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let stopRequested = false;
+let holdSweep = false;
+let stopController = new AbortController();
 
-export function startUnusualScan(db: DatabaseSync, log: (message: string) => void): Promise<boolean> {
+export function stopUnusualScan(): { stopping: boolean } {
+  holdSweep = true;
+  const stopping = status.running;
+  stopRequested = stopping;
+  if (stopping) stopController.abort();
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  return { stopping };
+}
+
+export function startUnusualScan(db: DatabaseSync, log: (message: string) => void, manual = false): Promise<boolean> {
   if (status.running) return Promise.resolve(false);
+  if (manual) {
+    holdSweep = false;
+    stopRequested = false;
+  }
+  if (holdSweep) return Promise.resolve(false);
+  stopController = new AbortController();
   status.running = true;
   const symbols = db
     .prepare(
@@ -87,7 +108,7 @@ async function begin(
   if (!locked) {
     status.running = false;
     log("sweep already running elsewhere; retrying shortly");
-    if (!retryTimer) {
+    if (!holdSweep && !retryTimer) {
       retryTimer = setTimeout(() => {
         retryTimer = null;
         void startUnusualScan(db, log);
@@ -141,7 +162,7 @@ async function run(
     status.current = [...inflight].sort();
   };
   const workers = Array.from({ length: 4 }, async () => {
-    while (cursor < symbols.length) {
+    while (!stopRequested && cursor < symbols.length) {
       const index = cursor;
       cursor += 1;
       const symbol = symbols[index];
@@ -149,12 +170,13 @@ async function run(
       publishCurrent();
       let chain: Awaited<ReturnType<typeof fetchOptionChain>> | null = null;
       try {
-        for (let attempt = 0; attempt < 5; attempt += 1) {
+        for (let attempt = 0; attempt < 5 && !stopRequested; attempt += 1) {
           try {
-            chain = await fetchOptionChain(symbol.ticker);
+            chain = await fetchOptionChain(symbol.ticker, stopController.signal);
             break;
           } catch (error) {
             const retryable = typeof error === "object" && error !== null && "retryable" in error;
+            if (stopRequested) break;
             if (!retryable || attempt === 4) {
               status.errors += 1;
               chain = null;
@@ -163,7 +185,7 @@ async function run(
             await sleep(3_000 * (attempt + 1));
           }
         }
-        if (chain?.complete) {
+        if (!stopRequested && chain?.complete) {
           try {
             await upsertContracts(chain.unusual, symbol.ticker, symbol.inSp500, symbol.inNasdaq, scanId, watermark);
             await removeSettledContracts(symbol.ticker, chain.stillOpen);
@@ -178,14 +200,22 @@ async function run(
         status.scanned += 1;
         publishCurrent();
       }
-      if (status.scanned % 25 === 0) {
+      if (!stopRequested && status.scanned % 25 === 0) {
         await touchSweep();
         log(`scan ${status.scanned}/${status.total} unusual=${status.unusual} errors=${status.errors}`);
       }
-      await sleep(120);
+      if (!stopRequested) await sleep(120);
     }
   });
   await Promise.all(workers);
+  if (stopRequested) {
+    status.current = [];
+    status.running = false;
+    status.finishedAt = new Date().toISOString();
+    stopRequested = false;
+    log(`scan stopped at ${status.scanned}/${status.total}`);
+    return;
+  }
   const started = status.startedAt ? new Date(status.startedAt) : new Date();
   await markScanFinished(dateTimeInNewYork(started));
   const visible = await countVisibleContracts();
@@ -198,6 +228,19 @@ async function run(
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const step = 200;
+  let left = ms;
+  return new Promise((resolve) => {
+    const tick = () => {
+      if (stopRequested || left <= 0) {
+        resolve();
+        return;
+      }
+      const wait = Math.min(step, left);
+      left -= wait;
+      setTimeout(tick, wait);
+    };
+    tick();
+  });
 }
 

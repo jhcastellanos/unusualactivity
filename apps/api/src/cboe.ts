@@ -38,10 +38,10 @@ export type OptionChain = {
   stillOpen: string[];
 };
 
-export async function fetchOptionChain(ticker: string): Promise<OptionChain> {
+export async function fetchOptionChain(ticker: string, signal?: AbortSignal): Promise<OptionChain> {
   const response = await fetch(`https://cdn.cboe.com/api/global/delayed_quotes/options/${encodeURIComponent(ticker)}.json`, {
     headers: { "User-Agent": "unusualactivity-personal/0.1" },
-    signal: AbortSignal.timeout(20_000),
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(20_000), signal]) : AbortSignal.timeout(20_000),
   });
   if (response.status === 404) return { complete: false, unusual: [], stillOpen: [] };
   if (!response.ok) {

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { openDatabase, replaceSecurities } from "./db.js";
 import { loadSecurityUniverse } from "./symbols.js";
-import { adoptSavedScan, getScanStatus, startUnusualScan, SWEEP_INTERVAL_MS } from "./scan.js";
+import { adoptSavedScan, getScanStatus, startUnusualScan, stopUnusualScan, SWEEP_INTERVAL_MS } from "./scan.js";
 import { countVisibleContracts, getLastUpdatedAt, listActivity, migrateNeon, tickerFlow } from "./neon.js";
 import { tickerNews } from "./news.js";
 
@@ -147,9 +147,13 @@ app.get("/api/securities/search", async (request) => {
 });
 
 app.post("/api/scan", async () => {
-  const started = await startUnusualScan(db, logScan);
+  const started = await startUnusualScan(db, logScan, true);
   const scan = getScanStatus();
   return { started, running: scan.running, busy: !started && !scan.running };
+});
+
+app.post("/api/scan/stop", async () => {
+  return stopUnusualScan();
 });
 
 app.get("/api/news", async (request, reply) => {
