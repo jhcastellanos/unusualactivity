@@ -12,6 +12,7 @@ export type ActivityQuery = {
   order: "ASC" | "DESC";
   listing: string;
   q: string;
+  quiet: boolean;
 };
 
 let pool: pg.Pool | null = null;
@@ -135,6 +136,21 @@ export async function countVisibleContracts(): Promise<{ count: number; last: st
   return { count: Number(result.rows[0]?.count ?? 0), last: result.rows[0]?.last ?? null };
 }
 
+export async function removeExpiredContracts(today = todayInNewYork()): Promise<number> {
+  const result = await getPool().query(`DELETE FROM unusual_contracts WHERE expiration < $1`, [today]);
+  return result.rowCount ?? 0;
+}
+
+export async function removeSettledContracts(ticker: string, stillOpen: string[]): Promise<number> {
+  const result = await getPool().query(
+    `DELETE FROM unusual_contracts
+     WHERE ticker = $1
+     AND NOT (option_symbol = ANY($2::text[]))`,
+    [ticker, stillOpen],
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function upsertContracts(
   contracts: UnusualContract[],
   ticker: string,
@@ -249,6 +265,9 @@ export async function listActivity(query: ActivityQuery): Promise<{ total: numbe
   if (query.q) {
     params.push(`${query.q.replace(/[\\%_]/g, "\\$&")}%`);
     filters.clauses.push(`ticker LIKE $${params.length} ESCAPE '\\'`);
+  }
+  if (query.quiet) {
+    filters.clauses.push(`(volume_oi_ratio IS NULL OR volume_oi_ratio < ${DAY_UNUSUAL_VOLUME_RATIO})`);
   }
   const where = filters.clauses.length ? `WHERE ${filters.clauses.join(" AND ")}` : "";
   const db = getPool();

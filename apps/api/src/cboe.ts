@@ -1,4 +1,4 @@
-import { daysToExpiration, isSizedOpenContract, parseOptionSymbol, qualifyingPremium, todayInNewYork, volumeOiRatio } from "./domain.js";
+import { daysToExpiration, isSizedOpenContract, parseOptionSymbol, qualifyingPremium, remainsOpen, todayInNewYork, volumeOiRatio } from "./domain.js";
 
 const SOURCE = "cboe-delayed-quotes";
 
@@ -32,12 +32,18 @@ type ChainContract = {
   last_trade_time?: string;
 };
 
-export async function fetchUnusualContracts(ticker: string): Promise<UnusualContract[]> {
+export type OptionChain = {
+  complete: boolean;
+  unusual: UnusualContract[];
+  stillOpen: string[];
+};
+
+export async function fetchOptionChain(ticker: string): Promise<OptionChain> {
   const response = await fetch(`https://cdn.cboe.com/api/global/delayed_quotes/options/${encodeURIComponent(ticker)}.json`, {
     headers: { "User-Agent": "unusualactivity-personal/0.1" },
     signal: AbortSignal.timeout(20_000),
   });
-  if (response.status === 404) return [];
+  if (response.status === 404) return { complete: false, unusual: [], stillOpen: [] };
   if (!response.ok) {
     if (response.status === 429 || response.status === 503) {
       await response.arrayBuffer().catch(() => undefined);
@@ -49,15 +55,17 @@ export async function fetchUnusualContracts(ticker: string): Promise<UnusualCont
   }
   const payload = (await response.json()) as { data?: { current_price?: number; options?: ChainContract[] } };
   const options = payload.data?.options;
-  if (!options) return [];
+  if (!options) return { complete: false, unusual: [], stillOpen: [] };
   const today = todayInNewYork();
   const underlyingPrice = numberOrNull(payload.data?.current_price);
   const unusual: UnusualContract[] = [];
+  const stillOpen: string[] = [];
   for (const contract of options) {
     if (!contract.option) continue;
     const parsed = parseOptionSymbol(contract.option);
     const volume = wholeNumber(contract.volume);
     const openInterest = wholeNumber(contract.open_interest);
+    if (parsed && remainsOpen(openInterest, parsed.expiration, today)) stillOpen.push(contract.option);
     if (!parsed || volume == null || openInterest == null) continue;
     const bid = numberOrNull(contract.bid);
     const ask = numberOrNull(contract.ask);
@@ -96,7 +104,12 @@ export async function fetchUnusualContracts(ticker: string): Promise<UnusualCont
       source: SOURCE,
     });
   }
-  return unusual;
+  return { complete: true, unusual, stillOpen };
+}
+
+export async function fetchUnusualContracts(ticker: string): Promise<UnusualContract[]> {
+  const chain = await fetchOptionChain(ticker);
+  return chain.unusual;
 }
 
 function wholeNumber(value: unknown): number | null {

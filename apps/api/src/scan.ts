@@ -1,13 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { UnusualContract } from "./cboe.js";
-import { fetchUnusualContracts } from "./cboe.js";
-import { dateTimeInNewYork } from "./domain.js";
+import { fetchOptionChain } from "./cboe.js";
+import { dateTimeInNewYork, todayInNewYork } from "./domain.js";
 import {
   countVisibleContracts,
   getLastUpdatedAt,
   markScanFinished,
   releaseSweep,
   rememberSavedSweep,
+  removeExpiredContracts,
+  removeSettledContracts,
   touchSweep,
   tryAcquireSweep,
   upsertContracts,
@@ -62,8 +63,11 @@ export async function adoptSavedScan(total: number): Promise<boolean> {
   return true;
 }
 
-export function startUnusualScan(db: DatabaseSync, log: (message: string) => void): void {
-  if (status.running) return;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function startUnusualScan(db: DatabaseSync, log: (message: string) => void): Promise<boolean> {
+  if (status.running) return Promise.resolve(false);
+  status.running = true;
   const symbols = db
     .prepare(
       `SELECT ticker, in_sp500 AS inSp500, in_nasdaq AS inNasdaq
@@ -71,41 +75,57 @@ export function startUnusualScan(db: DatabaseSync, log: (message: string) => voi
        ORDER BY in_sp500 DESC, ticker ASC`,
     )
     .all() as Array<{ ticker: string; inSp500: number; inNasdaq: number }>;
-  void begin(db, symbols, log);
+  return begin(db, symbols, log);
 }
 
 async function begin(
   db: DatabaseSync,
   symbols: Array<{ ticker: string; inSp500: number; inNasdaq: number }>,
   log: (message: string) => void,
-): Promise<void> {
-  if (status.running) return;
+): Promise<boolean> {
   const locked = await tryAcquireSweep();
   if (!locked) {
+    status.running = false;
     log("sweep already running elsewhere; retrying shortly");
-    setTimeout(() => startUnusualScan(db, log), 20_000);
-    return;
+    if (!retryTimer) {
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void startUnusualScan(db, log);
+      }, 20_000);
+    }
+    return false;
   }
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  let visibleCount = 0;
   try {
     const visible = await countVisibleContracts();
-    status.running = true;
-    status.scanned = 0;
-    status.total = symbols.length;
-    status.unusual = visible.count;
-    status.errors = 0;
-    status.current = [];
-    status.startedAt = new Date().toISOString();
-    status.finishedAt = null;
-    status.phase = "initial";
-    await run(symbols, status.startedAt, null, log);
+    visibleCount = visible.count;
   } catch (error) {
+    status.running = false;
+    log(`sweep stopped: ${error instanceof Error ? error.message : "error"}`);
+    await releaseSweep();
+    return false;
+  }
+  status.scanned = 0;
+  status.total = symbols.length;
+  status.unusual = visibleCount;
+  status.errors = 0;
+  status.current = [];
+  status.startedAt = new Date().toISOString();
+  status.finishedAt = null;
+  status.phase = visibleCount > 0 ? "refresh" : "initial";
+  void run(symbols, status.startedAt, null, log).catch((error: unknown) => {
     status.running = false;
     status.current = [];
     status.phase = status.unusual > 0 ? "saved" : "initial";
     log(`sweep stopped: ${error instanceof Error ? error.message : "error"}`);
-  } finally {
-    if (!status.running) await releaseSweep();
-  }
+  }).finally(() => {
+    if (!status.running) void releaseSweep();
+  });
+  return true;
 }
 
 async function run(
@@ -114,6 +134,7 @@ async function run(
   watermark: string | null,
   log: (message: string) => void,
 ): Promise<void> {
+  await removeExpiredContracts(todayInNewYork());
   let cursor = 0;
   const inflight = new Set<string>();
   const publishCurrent = () => {
@@ -126,25 +147,26 @@ async function run(
       const symbol = symbols[index];
       inflight.add(symbol.ticker);
       publishCurrent();
-      let contracts: UnusualContract[] | null = null;
+      let chain: Awaited<ReturnType<typeof fetchOptionChain>> | null = null;
       try {
         for (let attempt = 0; attempt < 5; attempt += 1) {
           try {
-            contracts = await fetchUnusualContracts(symbol.ticker);
+            chain = await fetchOptionChain(symbol.ticker);
             break;
           } catch (error) {
             const retryable = typeof error === "object" && error !== null && "retryable" in error;
             if (!retryable || attempt === 4) {
               status.errors += 1;
-              contracts = null;
+              chain = null;
               break;
             }
             await sleep(3_000 * (attempt + 1));
           }
         }
-        if (contracts) {
+        if (chain?.complete) {
           try {
-            await upsertContracts(contracts, symbol.ticker, symbol.inSp500, symbol.inNasdaq, scanId, watermark);
+            await upsertContracts(chain.unusual, symbol.ticker, symbol.inSp500, symbol.inNasdaq, scanId, watermark);
+            await removeSettledContracts(symbol.ticker, chain.stillOpen);
             const visible = await countVisibleContracts();
             status.unusual = visible.count;
           } catch {

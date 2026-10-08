@@ -147,6 +147,12 @@ export function qualifyingPremium(
   return size >= MIN_UNUSUAL_SIZE ? size : null;
 }
 
+export function remainsOpen(openInterest: number | null, expiration: string, today: string): boolean {
+  if (expiration < today) return false;
+  if (openInterest == null) return true;
+  return openInterest > 0;
+}
+
 export function isSizedOpenContract(
   input: {
     volume: number | null;

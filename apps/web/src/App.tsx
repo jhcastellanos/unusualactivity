@@ -50,6 +50,7 @@ type PageState = {
   sort: string;
   order: Order;
   listing: Listing;
+  quiet: boolean;
 };
 
 type Suggestion = {
@@ -73,6 +74,7 @@ function readState(): PageState {
     sort: url.searchParams.get("sort") ?? "occurredAt",
     order,
     listing: listing === "sp500" || listing === "nasdaq" ? listing : "all",
+    quiet: url.searchParams.get("quiet") === "1",
   };
 }
 
@@ -84,6 +86,7 @@ function writeUrl(state: PageState) {
   if (state.listing !== "all") params.set("listing", state.listing);
   if (state.sort !== "occurredAt") params.set("sort", state.sort);
   if (state.order !== "desc") params.set("order", state.order);
+  if (state.quiet) params.set("quiet", "1");
   const next = `/${params.size ? `?${params}` : ""}`;
   if (`${window.location.pathname}${window.location.search}` === next) return;
   window.history.pushState(null, "", next);
@@ -137,6 +140,7 @@ export function App() {
   const [bias, setBias] = useState<Bias | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
   const hosted = false;
   const hostedBoard = useHostedBoard(hosted, state);
 
@@ -227,6 +231,7 @@ export function App() {
         order: state.order,
         listing: state.listing,
         q: state.q,
+        ...(state.quiet ? { quiet: "1" } : {}),
       });
       fetch(`/api/activity?${params}`)
         .then((response) => {
@@ -292,6 +297,31 @@ export function App() {
     update({ page });
   }
 
+  async function refreshAll() {
+    setRefreshNote(null);
+    const response = await fetch("/api/scan", { method: "POST" });
+    if (!response.ok) {
+      setRefreshNote("No pude iniciar la actualización.");
+      return;
+    }
+    const body = (await response.json()) as { started?: boolean; running?: boolean; busy?: boolean };
+    if (body.busy) {
+      setRefreshNote("Ya hay una actualización en curso.");
+      return;
+    }
+    if (body.running) {
+      setStatus((current) => current ? {
+        ...current,
+        scan: {
+          ...current.scan,
+          running: true,
+          phase: "refresh",
+          scanned: body.started ? 0 : current.scan.scanned,
+        },
+      } : current);
+    }
+  }
+
   function chooseAsset(ticker: string) {
     setSuggestOpen(false);
     setSuggestions([]);
@@ -326,6 +356,7 @@ export function App() {
             Se barren todos los activos. Entra un contrato si sigue abierto, el último trade es de los últimos 6 meses y la prima es de al menos $500,000.
             La prima es la mayor entre el volumen de hoy y el open interest, por el precio, por 100. Si el vencimiento ya pasó, no aparece.
             La marca 2× OI significa que hoy se negoció al menos el doble del open interest de ese contrato. Esas filas van en amarillo y salen primero.
+            En cada actualización salen los contratos vencidos, los que quedaron con open interest en cero y los que ya no están en la cadena.
           </p>
         </div>
         <dl className="status">
@@ -348,12 +379,20 @@ export function App() {
         </dl>
       </header>
 
-      <ScanProgress scan={scan} />
+      <ScanProgress scan={scan} note={refreshNote} onRefresh={() => void refreshAll()} />
 
       <nav className="switch" aria-label="Universo">
         <button type="button" className={state.listing === "all" ? "on" : ""} onClick={() => update({ listing: "all", page: 1 })}>Todos</button>
         <button type="button" className={state.listing === "sp500" ? "on" : ""} onClick={() => update({ listing: "sp500", page: 1 })}>S&P 500</button>
         <button type="button" className={state.listing === "nasdaq" ? "on" : ""} onClick={() => update({ listing: "nasdaq", page: 1 })}>NASDAQ</button>
+        <label className={state.quiet ? "switch-check on" : "switch-check"}>
+          <input
+            type="checkbox"
+            checked={state.quiet}
+            onChange={(event) => update({ quiet: event.target.checked, page: 1 })}
+          />
+          Quitar contratos con highlight
+        </label>
       </nav>
 
       <form className="search" onSubmit={(event) => event.preventDefault()} role="search">
@@ -399,10 +438,15 @@ export function App() {
 
       {shownError && <p className="banner">{shownError}</p>}
 
+      <div className="workspace">
       <section className="panel" aria-busy={shownLoading}>
         <div className="panel-head">
           <p>{shownTotal === 0 ? "0 contratos" : `${start.toLocaleString("en-US")}–${end.toLocaleString("en-US")} de ${shownTotal.toLocaleString("en-US")}`}</p>
-          <p className="sort-hint">Un clic ordena solo esa columna. Otro clic en otra columna reemplaza el orden. Las filas del día siguen primero.</p>
+          <p className="sort-hint">
+            {state.quiet
+              ? "Un clic ordena solo esa columna. Estás viendo las filas sin la marca amarilla."
+              : "Un clic ordena solo esa columna. Otro clic en otra columna reemplaza el orden. Las filas del día siguen primero."}
+          </p>
           <label>
             Filas
             <select value={state.pageSize} onChange={(event) => update({ pageSize: Number(event.target.value), page: 1 })}>
@@ -465,7 +509,103 @@ export function App() {
         </div>
         <Pager page={state.page} pageCount={pageCount} onPage={changePage} />
       </section>
+      <NewsAside ticker={state.q} />
+      </div>
     </div>
+  );
+}
+
+type NewsLean = "alza" | "baja" | "mixta" | "sin_direccion";
+
+type NewsPayload = {
+  ticker: string;
+  source: string;
+  items: Array<{
+    title: string;
+    summary: string | null;
+    source: string;
+    url: string;
+    publishedAt: string;
+  }>;
+  read: { lean: NewsLean; text: string };
+};
+
+const NEWS_LEAN: Record<NewsLean, string> = {
+  alza: "Mejora",
+  baja: "Cautela",
+  mixta: "Mixta",
+  sin_direccion: "Sin dirección",
+};
+
+function NewsAside({ ticker }: { ticker: string }) {
+  const [news, setNews] = useState<NewsPayload | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!ticker) {
+      setNews(null);
+      setFailed(false);
+      return;
+    }
+    let ignore = false;
+    const load = () => {
+      fetch(`/api/news?ticker=${encodeURIComponent(ticker)}`)
+        .then((response) => {
+          if (!response.ok) throw new Error("news");
+          return response.json();
+        })
+        .then((body: NewsPayload) => {
+          if (ignore) return;
+          setFailed(false);
+          setNews(body.ticker === ticker ? body : null);
+        })
+        .catch(() => {
+          if (!ignore) setFailed(true);
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 10 * 60 * 1000);
+    return () => {
+      ignore = true;
+      window.clearInterval(timer);
+    };
+  }, [ticker]);
+
+  const when = new Intl.DateTimeFormat("es-MX", {
+    timeZone: "America/New_York",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+
+  return (
+    <aside className="news-side" aria-label={ticker ? `Noticias de ${ticker}` : "Noticias del activo"}>
+      <p className="news-kicker">Noticias</p>
+      <h2>{ticker || "Activo"}</h2>
+      {!ticker && <p className="news-source">Elige un activo para ver sus notas y la lectura que sale de ellas.</p>}
+      {ticker && !news && !failed && <p className="news-source">Leyendo las notas recientes.</p>}
+      {failed && <p className="news-source">No pude leer las notas de {ticker}.</p>}
+      {news && news.ticker === ticker && (
+        <>
+          <div className={`news-read ${news.read.lean}`}>
+            <strong>{NEWS_LEAN[news.read.lean]}</strong>
+            <p>{news.read.text}</p>
+            <p className="news-source">Lectura en español de las notas de {news.source}. No es una proyección de precio.</p>
+          </div>
+          <ul className="news-list">
+            {news.items.map((item) => (
+              <li key={item.url}>
+                <p className="news-meta">{when.format(new Date(item.publishedAt))} · {item.source}</p>
+                <a href={item.url} target="_blank" rel="noreferrer">{item.title}</a>
+                {item.summary && <p>{item.summary}</p>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </aside>
   );
 }
 
@@ -559,7 +699,7 @@ function FlowCard({
   );
 }
 
-function ScanProgress({ scan }: { scan: Scan | undefined }) {
+function ScanProgress({ scan, note, onRefresh }: { scan: Scan | undefined; note: string | null; onRefresh: () => void }) {
   const scanned = scan?.scanned ?? 0;
   const total = scan?.total ?? 0;
   const done = total > 0 ? Math.min(100, (scanned / total) * 100) : 0;
@@ -604,12 +744,16 @@ function ScanProgress({ scan }: { scan: Scan | undefined }) {
             ? "La tabla muestra los contratos guardados"
             : `${scanned.toLocaleString("en-US")} / ${total.toLocaleString("en-US")} activos`}
         </span>
+        <button type="button" className="refresh" onClick={onRefresh} disabled={running}>
+          {running ? "Actualizando activos" : "Actualizar activos"}
+        </button>
         <span>
           {saved
             ? "listo para consultar"
             : `extraído ${done.toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`}
         </span>
       </div>
+      {note && <p className="refresh-note">{note}</p>}
     </section>
   );
 }

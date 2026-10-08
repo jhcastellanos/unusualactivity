@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysToExpiration, estimatedPremium, flowLean, isDayUnusualVolume, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, summarizeFlow, volumeOiRatio } from "./domain.ts";
+import { daysToExpiration, estimatedPremium, flowLean, isDayUnusualVolume, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, remainsOpen, summarizeFlow, volumeOiRatio } from "./domain.ts";
 
 describe("parseOptionSymbol", () => {
   it("reads expiration, call/put and strike from the OCC symbol", () => {
@@ -148,6 +148,21 @@ describe("sized open contracts", () => {
         now,
       ),
     ).toBe(false);
+  });
+});
+
+describe("remainsOpen", () => {
+  it("keeps a contract that still has open interest and has not expired", () => {
+    expect(remainsOpen(120, "2026-12-18", "2026-10-08")).toBe(true);
+  });
+
+  it("treats a missing open interest as still listed", () => {
+    expect(remainsOpen(null, "2026-12-18", "2026-10-08")).toBe(true);
+  });
+
+  it("drops a liquidated or expired contract", () => {
+    expect(remainsOpen(0, "2026-12-18", "2026-10-08")).toBe(false);
+    expect(remainsOpen(120, "2026-10-07", "2026-10-08")).toBe(false);
   });
 });
 

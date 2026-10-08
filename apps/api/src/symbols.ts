@@ -4,6 +4,21 @@ const NASDAQ_LISTED = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.
 const OTHER_LISTED = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt";
 const SP500 = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv";
 
+const OPTION_ETFS = new Set([
+  "SPY", "IVV", "VOO", "SPLG", "DIA", "IWM", "MDY", "IJH", "IJR", "VTI", "RSP", "IWB", "IWV", "VT",
+  "SPXL", "SPXS", "UPRO", "SDS", "TNA", "TZA",
+  "XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY",
+  "XHB", "XME", "XOP", "XRT", "XBI", "OIH", "KRE", "SMH", "ARKK", "KWEB",
+  "GLD", "SLV", "IAU", "GDX", "GDXJ", "USO", "UNG",
+  "EEM", "EFA", "FXI", "EWZ", "EWJ", "EWY", "EWG", "EWT", "EWU", "VWO", "MCHI", "INDA",
+  "HYG", "LQD", "JNK", "IEF", "SHY", "BND", "TIP", "TBT",
+  "VNQ", "IYR", "BITO", "VXX", "UVXY", "SVXY",
+]);
+
+export function includeSecurity(row: { ticker: string; inSp500: boolean; inNasdaq: boolean }): boolean {
+  return row.inSp500 || row.inNasdaq || OPTION_ETFS.has(row.ticker);
+}
+
 const EXCHANGE_LABEL: Record<string, string> = {
   A: "NYSE American",
   N: "NYSE",
@@ -120,7 +135,7 @@ export async function loadSecurityUniverse(): Promise<{ rows: SecurityRow[]; sou
   }
 
   const rows = [...byTicker.values()]
-    .filter((row) => row.inSp500 || row.inNasdaq)
+    .filter((row) => includeSecurity(row))
     .map((row) => ({
       ticker: row.ticker,
       companyName: row.companyName,

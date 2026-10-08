@@ -9,6 +9,7 @@ export async function GET(request: Request): Promise<Response> {
   const listingParam = url.searchParams.get("listing") ?? "all";
   const listing = listingParam === "sp500" || listingParam === "nasdaq" ? listingParam : "all";
   const q = (url.searchParams.get("q") ?? "").trim().toUpperCase().slice(0, 12);
+  const quiet = url.searchParams.get("quiet") === "1";
   try {
     const listed = await listActivity({
       page,
@@ -17,6 +18,7 @@ export async function GET(request: Request): Promise<Response> {
       order,
       listing,
       q,
+      quiet,
     });
     return Response.json({
       page,

@@ -6,6 +6,7 @@ import { openDatabase, replaceSecurities } from "./db.js";
 import { loadSecurityUniverse } from "./symbols.js";
 import { adoptSavedScan, getScanStatus, startUnusualScan, SWEEP_INTERVAL_MS } from "./scan.js";
 import { countVisibleContracts, getLastUpdatedAt, listActivity, migrateNeon, tickerFlow } from "./neon.js";
+import { tickerNews } from "./news.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -145,6 +146,22 @@ app.get("/api/securities/search", async (request) => {
   return { rows };
 });
 
+app.post("/api/scan", async () => {
+  const started = await startUnusualScan(db, logScan);
+  const scan = getScanStatus();
+  return { started, running: scan.running, busy: !started && !scan.running };
+});
+
+app.get("/api/news", async (request, reply) => {
+  const query = request.query as Record<string, string | undefined>;
+  try {
+    return await tickerNews(query.ticker ?? "");
+  } catch (error) {
+    app.log.error({ message: error instanceof Error ? error.message : "news" }, "news read failed");
+    return reply.code(500).send({ error: "No pude leer las noticias." });
+  }
+});
+
 app.get("/api/activity/bias", async (request) => {
   const query = request.query as Record<string, string | undefined>;
   const ticker = (query.ticker ?? "").trim().toUpperCase().slice(0, 12);
@@ -163,6 +180,7 @@ app.get("/api/activity", async (request) => {
   const order = query.order === "asc" ? "ASC" : "DESC";
   const listing = ["sp500", "nasdaq", "all"].includes(query.listing ?? "") ? (query.listing as string) : "all";
   const q = (query.q ?? "").trim().toUpperCase().slice(0, 12);
+  const quiet = query.quiet === "1";
   const listed = await listActivity({
     page,
     pageSize,
@@ -170,6 +188,7 @@ app.get("/api/activity", async (request) => {
     order,
     listing,
     q,
+    quiet,
   });
   return {
     page,
