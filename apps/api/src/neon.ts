@@ -263,8 +263,8 @@ export async function listActivity(query: ActivityQuery): Promise<{ total: numbe
     filters.clauses.push(`in_nasdaq = $${params.length}`);
   }
   if (query.q) {
-    params.push(`${query.q.replace(/[\\%_]/g, "\\$&")}%`);
-    filters.clauses.push(`ticker LIKE $${params.length} ESCAPE '\\'`);
+    params.push(query.q);
+    filters.clauses.push(`ticker = $${params.length}`);
   }
   if (query.quiet) {
     filters.clauses.push(`(volume_oi_ratio IS NULL OR volume_oi_ratio < ${DAY_UNUSUAL_VOLUME_RATIO})`);

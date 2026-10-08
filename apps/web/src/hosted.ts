@@ -187,7 +187,7 @@ function pageContracts(all: Contract[], state: PageState): { rows: Contract[]; t
     if (!occurred || occurred < oldest) return false;
     if (state.listing === "sp500" && row.inSp500 !== 1) return false;
     if (state.listing === "nasdaq" && row.inNasdaq !== 1) return false;
-    if (state.q && !row.ticker.startsWith(state.q)) return false;
+    if (state.q && row.ticker !== state.q) return false;
     return true;
   });
   const key = state.sort as keyof Contract;
