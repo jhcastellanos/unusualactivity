@@ -299,6 +299,9 @@ tbody tr.day-unusual {
 }
 tbody tr.day-unusual:hover { background: #ffd15a; }
 tbody tr.day-unusual .ratio { color: #7a4e00; font-weight: 700; }
+.ideal-high { color: var(--accent); font-weight: 650; }
+.ideal-mid { color: var(--text); }
+.ideal-low { color: var(--muted); }
 .day-mark {
   display: inline-block;
   margin-left: 8px;

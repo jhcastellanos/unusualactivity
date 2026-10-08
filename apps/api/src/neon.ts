@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import type { UnusualContract } from "./cboe.js";
-import { dateTimeInNewYork, DAY_UNUSUAL_VOLUME_RATIO, MIN_UNUSUAL_SIZE, plusMonths, summarizeFlow, todayInNewYork } from "./domain.js";
+import { dateTimeInNewYork, DAY_UNUSUAL_VOLUME_RATIO, MIN_UNUSUAL_SIZE, plusMonths, selectionScoreSql, summarizeFlow, todayInNewYork } from "./domain.js";
 
 const { Pool } = pg;
 
@@ -60,6 +60,8 @@ export async function migrateNeon(): Promise<void> {
       trade_since TEXT
     )
   `);
+  await db.query(`ALTER TABLE unusual_contracts ADD COLUMN IF NOT EXISTS delta DOUBLE PRECISION`);
+  await db.query(`ALTER TABLE unusual_contracts ADD COLUMN IF NOT EXISTS theta DOUBLE PRECISION`);
   await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_owner TEXT`);
   await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_heartbeat TIMESTAMPTZ`);
   await db.query(`INSERT INTO scan_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
@@ -174,11 +176,11 @@ export async function upsertContracts(
         `INSERT INTO unusual_contracts (
            option_symbol, occurred_at, ticker, option_type, direction, strike, expiration, dte,
            volume, open_interest, volume_oi_ratio, estimated_premium, bid, ask, last, underlying_price,
-           in_sp500, in_nasdaq, source, scan_id
+           delta, theta, in_sp500, in_nasdaq, source, scan_id
          ) VALUES (
            $1, $2, $3, $4, $5, $6, $7, $8,
            $9, $10, $11, $12, $13, $14, $15, $16,
-           $17, $18, $19, $20
+           $17, $18, $19, $20, $21, $22
          )
          ON CONFLICT (option_symbol) DO UPDATE SET
            occurred_at = EXCLUDED.occurred_at,
@@ -196,6 +198,8 @@ export async function upsertContracts(
            ask = EXCLUDED.ask,
            last = EXCLUDED.last,
            underlying_price = EXCLUDED.underlying_price,
+           delta = EXCLUDED.delta,
+           theta = EXCLUDED.theta,
            in_sp500 = EXCLUDED.in_sp500,
            in_nasdaq = EXCLUDED.in_nasdaq,
            source = EXCLUDED.source,
@@ -217,6 +221,8 @@ export async function upsertContracts(
           contract.ask,
           contract.last,
           contract.underlyingPrice,
+          contract.delta,
+          contract.theta,
           inSp500,
           inNasdaq,
           contract.source,
@@ -247,6 +253,7 @@ const SORTS: Record<string, string> = {
   bid: "bid",
   ask: "ask",
   last: "last",
+  selectionScore: '"selectionScore"',
 };
 
 export async function listActivity(query: ActivityQuery): Promise<{ total: number; rows: unknown[]; sort: string }> {
@@ -279,6 +286,7 @@ export async function listActivity(query: ActivityQuery): Promise<{ total: numbe
             open_interest AS "openInterest", volume_oi_ratio AS "volumeOiRatio",
             estimated_premium AS "estimatedPremium", bid, ask, last,
             underlying_price AS "underlyingPrice", source,
+            ${selectionScoreSql} AS "selectionScore",
             (volume_oi_ratio >= ${DAY_UNUSUAL_VOLUME_RATIO}) AS "dayUnusual"
      FROM unusual_contracts
      ${where}

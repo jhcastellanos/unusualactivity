@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { daysToExpiration, estimatedPremium, flowLean, isDayUnusualVolume, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, remainsOpen, summarizeFlow, volumeOiRatio } from "./domain.ts";
+import { daysToExpiration, estimatedPremium, flowLean, isDayUnusualVolume, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, remainsOpen, selectionScore, summarizeFlow, volumeOiRatio } from "./domain.ts";
+
+describe("selectionScore", () => {
+  it("prefers a medium dated contract with useful delta and slow decay", () => {
+    const score = selectionScore({ delta: 0.41, theta: -0.035, dte: 162, last: 7.3, underlyingPrice: 79.3 });
+    expect(score).toBeGreaterThanOrEqual(75);
+  });
+
+  it("marks a one day contract as a poor medium term choice", () => {
+    const score = selectionScore({ delta: 0.41, theta: -0.79, dte: 1, last: 0.73, underlyingPrice: 79.3 });
+    expect(score).not.toBeNull();
+    expect(score!).toBeLessThan(45);
+  });
+
+  it("returns null when Cboe did not send the greeks", () => {
+    expect(selectionScore({ delta: null, theta: null, dte: 162, last: 7.3, underlyingPrice: 79.3 })).toBeNull();
+  });
+});
 
 describe("parseOptionSymbol", () => {
   it("reads expiration, call/put and strike from the OCC symbol", () => {

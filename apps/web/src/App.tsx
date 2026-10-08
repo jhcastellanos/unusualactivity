@@ -41,6 +41,7 @@ type Contract = {
   last: number | null;
   underlyingPrice: number | null;
   estimatedPremium: number | null;
+  selectionScore: number | null;
 };
 
 type PageState = {
@@ -491,6 +492,14 @@ export function App() {
                 <Sortable label="Tipo" column="optionType" sort={state.sort} order={state.order} onSort={sortBy} />
                 <Sortable label="Strike" column="strike" sort={state.sort} order={state.order} onSort={sortBy} />
                 <Sortable label="Expiración" column="expiration" sort={state.sort} order={state.order} onSort={sortBy} />
+                <Sortable
+                  label="Score"
+                  column="selectionScore"
+                  sort={state.sort}
+                  order={state.order}
+                  onSort={sortBy}
+                  title="Score de selección para mediano y largo plazo."
+                />
                 <Sortable label="DTE" column="dte" sort={state.sort} order={state.order} onSort={sortBy} />
                 <Sortable label="Volumen" column="volume" sort={state.sort} order={state.order} onSort={sortBy} />
                 <Sortable label="OI" column="openInterest" sort={state.sort} order={state.order} onSort={sortBy} />
@@ -511,6 +520,7 @@ export function App() {
                   <td className={row.optionType}>{row.optionType === "call" ? "CALL" : "PUT"}</td>
                   <td className="num">{formatPrice(row.strike)}</td>
                   <td>{formatExpiration(row.expiration)}</td>
+                  <td className={`num ideal ${idealClass(row.selectionScore)}`} title={row.selectionScore == null ? "Este contrato todavía no tiene score." : `Score ${row.selectionScore} para mediano y largo plazo.`}>{row.selectionScore ?? "—"}</td>
                   <td className="num">{row.dte ?? "—"}</td>
                   <td className="num volume" title={row.dayUnusual ? "Hoy se negoció al menos el doble del open interest de este contrato." : undefined}>
                     {formatNumber(row.volume)}
@@ -524,7 +534,7 @@ export function App() {
               ))}
               {shownRows.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="empty">
+                  <td colSpan={12} className="empty">
                     {shownLoading || scan?.running
                       ? "Cargando contratos inusuales abiertos de al menos $500,000."
                       : "Ningún contrato abierto de al menos $500,000 con un trade de los últimos 6 meses."}
@@ -808,23 +818,32 @@ function defaultOrder(column: string): Order {
   return column === "expiration" || column === "dte" || column === "ticker" || column === "optionType" ? "asc" : "desc";
 }
 
+function idealClass(score: number | null): string {
+  if (score == null) return "";
+  if (score >= 75) return "ideal-high";
+  if (score >= 45) return "ideal-mid";
+  return "ideal-low";
+}
+
 function Sortable({
   label,
   column,
   sort,
   order,
   onSort,
+  title,
 }: {
   label: string;
   column: string;
   sort: string;
   order: Order;
   onSort: (column: string) => void;
+  title?: string;
 }) {
   const active = sort === column;
   return (
     <th>
-      <button type="button" onClick={() => onSort(column)} aria-pressed={active}>
+      <button type="button" title={title} onClick={() => onSort(column)} aria-pressed={active}>
         {label}
         {active ? (order === "desc" ? " ↓" : " ↑") : ""}
       </button>

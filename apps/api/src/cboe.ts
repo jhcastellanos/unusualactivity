@@ -19,6 +19,8 @@ export type UnusualContract = {
   last: number | null;
   underlyingPrice: number | null;
   estimatedPremium: number | null;
+  delta: number | null;
+  theta: number | null;
   source: string;
 };
 
@@ -30,6 +32,8 @@ type ChainContract = {
   volume?: number;
   last_trade_price?: number;
   last_trade_time?: string;
+  delta?: number;
+  theta?: number;
 };
 
 export type OptionChain = {
@@ -101,6 +105,8 @@ export async function fetchOptionChain(ticker: string, signal?: AbortSignal): Pr
       last,
       underlyingPrice,
       estimatedPremium: qualifyingPremium(volume, openInterest, last, bid, ask),
+      delta: numberOrNull(contract.delta),
+      theta: numberOrNull(contract.theta),
       source: SOURCE,
     });
   }
