@@ -2,19 +2,39 @@ import { describe, expect, it } from "vitest";
 import { daysToExpiration, estimatedPremium, flowLean, isDayUnusualVolume, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, remainsOpen, selectionScore, summarizeFlow, volumeOiRatio } from "./domain.ts";
 
 describe("selectionScore", () => {
-  it("prefers a medium dated contract with useful delta and slow decay", () => {
-    const score = selectionScore({ delta: 0.41, theta: -0.035, dte: 162, last: 7.3, underlyingPrice: 79.3 });
+  const positioned = { openInterest: 2_000, volumeOiRatio: 3, estimatedPremium: 8_000_000 };
+
+  it("prefers a medium dated contract with useful delta, slow decay, and real size", () => {
+    const score = selectionScore({ delta: 0.41, theta: -0.035, dte: 162, last: 7.3, underlyingPrice: 79.3, ...positioned });
     expect(score).toBeGreaterThanOrEqual(75);
   });
 
-  it("marks a one day contract as a poor medium term choice", () => {
-    const score = selectionScore({ delta: 0.41, theta: -0.79, dte: 1, last: 0.73, underlyingPrice: 79.3 });
+  it("marks a one day spike on thin open interest as a poor medium term choice", () => {
+    const score = selectionScore({
+      delta: 0.41,
+      theta: -0.79,
+      dte: 1,
+      last: 0.73,
+      underlyingPrice: 79.3,
+      openInterest: 20,
+      volumeOiRatio: 50,
+      estimatedPremium: 600_000,
+    });
     expect(score).not.toBeNull();
     expect(score!).toBeLessThan(45);
   });
 
+  it("ranks a built position above the same contract when today's volume dwarfs open interest", () => {
+    const base = { delta: 0.45, theta: -0.02, dte: 200, last: 8, underlyingPrice: 80, estimatedPremium: 6_000_000 };
+    const built = selectionScore({ ...base, openInterest: 1_500, volumeOiRatio: 3 });
+    const spike = selectionScore({ ...base, openInterest: 30, volumeOiRatio: 40 });
+    expect(built).not.toBeNull();
+    expect(spike).not.toBeNull();
+    expect(built!).toBeGreaterThan(spike!);
+  });
+
   it("returns null when Cboe did not send the greeks", () => {
-    expect(selectionScore({ delta: null, theta: null, dte: 162, last: 7.3, underlyingPrice: 79.3 })).toBeNull();
+    expect(selectionScore({ delta: null, theta: null, dte: 162, last: 7.3, underlyingPrice: 79.3, ...positioned })).toBeNull();
   });
 });
 

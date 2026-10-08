@@ -178,98 +178,49 @@ export type SelectionInput = {
   dte: number | null;
   last: number | null;
   underlyingPrice: number | null;
+  openInterest: number | null;
+  volumeOiRatio: number | null;
+  estimatedPremium: number | null;
 };
 
 export function selectionScore(input: SelectionInput): number | null {
-  const { delta, theta, dte, last, underlyingPrice } = input;
-  if (delta == null || theta == null || dte == null || last == null) return null;
-  if (![delta, theta, dte, last].every(Number.isFinite)) return null;
-  if (last <= 0 || dte < 0 || Math.abs(delta) > 1.05) return null;
-  const horizon = horizonPoints(dte);
-  const participation = deltaPoints(Math.min(1, Math.abs(delta)));
-  const decay = thetaPoints(theta, last);
-  const price = pricePoints(last, underlyingPrice);
-  return Math.round(horizon * 0.3 + participation * 0.3 + decay * 0.25 + price * 0.15);
+  const { delta, theta, dte, last, underlyingPrice, openInterest, volumeOiRatio, estimatedPremium } = input;
+  if (delta == null || theta == null || dte == null || last == null || openInterest == null || estimatedPremium == null) return null;
+  if (![delta, theta, dte, last, openInterest, estimatedPremium].every(Number.isFinite)) return null;
+  if (last <= 0 || dte < 0 || openInterest <= 0 || estimatedPremium <= 0 || Math.abs(delta) > 1.05) return null;
+  const ratio = volumeOiRatio != null && Number.isFinite(volumeOiRatio) ? Math.max(volumeOiRatio, 0) : 0;
+  const horizon = Math.exp(-(Math.log(Math.max(dte, 0.5) / 300) ** 2) / 0.98);
+  const participation = Math.exp(-((Math.min(1, Math.abs(delta)) - 0.5) ** 2) / 0.0648);
+  const decay = Math.exp(-(Math.abs(theta) / last) / 0.008);
+  const price = priceTerm(last, underlyingPrice);
+  const interest = 1 - Math.exp(-openInterest / 800);
+  const unusual = Math.exp(-((Math.log((ratio + 0.05) / 2.5) ** 2) / 1.445));
+  const size = 1 - Math.exp(-(Math.log(Math.max(estimatedPremium, 500_000) / 500_000) / 2.2));
+  return Math.round(100 * (horizon * 0.18 + participation * 0.16 + decay * 0.14 + price * 0.1 + interest * 0.14 + unusual * 0.14 + size * 0.14));
 }
 
-function horizonPoints(dte: number): number {
-  if (dte < 21) return 8;
-  if (dte < 45) return 28;
-  if (dte < 90) return 55;
-  if (dte < 180) return 82;
-  if (dte <= 540) return 100;
-  if (dte <= 900) return 78;
-  return 58;
-}
-
-function deltaPoints(absDelta: number): number {
-  if (absDelta <= 0.15) return 10 + (absDelta / 0.15) * 15;
-  if (absDelta <= 0.35) return 25 + ((absDelta - 0.15) / 0.2) * 55;
-  if (absDelta <= 0.5) return 80 + ((absDelta - 0.35) / 0.15) * 20;
-  if (absDelta <= 0.65) return 100 - ((absDelta - 0.5) / 0.15) * 20;
-  if (absDelta <= 0.85) return 80 - ((absDelta - 0.65) / 0.2) * 50;
-  return 30 - ((absDelta - 0.85) / 0.15) * 18;
-}
-
-function thetaPoints(theta: number, last: number): number {
-  if (theta === 0) return 40;
-  const burn = Math.abs(theta) / last;
-  if (burn <= 0.0015) return 100;
-  if (burn <= 0.004) return 100 - ((burn - 0.0015) / 0.0025) * 20;
-  if (burn <= 0.008) return 80 - ((burn - 0.004) / 0.004) * 25;
-  if (burn <= 0.015) return 55 - ((burn - 0.008) / 0.007) * 30;
-  return 12;
-}
-
-function pricePoints(last: number, underlyingPrice: number | null): number {
-  if (last < 0.5) return 15;
-  if (underlyingPrice == null || !Number.isFinite(underlyingPrice) || underlyingPrice <= 0) return last >= 1 ? 70 : 30;
-  const ratio = last / underlyingPrice;
-  if (ratio < 0.01) return 20;
-  if (ratio < 0.03) return 55;
-  if (ratio <= 0.2) return 100;
-  if (ratio <= 0.4) return 68;
-  return 30;
+function priceTerm(last: number, underlyingPrice: number | null): number {
+  const tradable = 1 - Math.exp(-last / 1.25);
+  if (underlyingPrice == null || !Number.isFinite(underlyingPrice) || underlyingPrice <= 0) return 0.55 * tradable;
+  const moneyness = Math.exp(-((Math.log(last / underlyingPrice / 0.1) ** 2) / 0.98));
+  return moneyness * tradable;
 }
 
 export const selectionScoreSql = `CASE
-  WHEN delta IS NULL OR theta IS NULL OR dte IS NULL OR last IS NULL OR last <= 0 OR dte < 0 OR abs(delta) > 1.05 THEN NULL
-  ELSE round((
-    (CASE
-      WHEN dte < 21 THEN 8
-      WHEN dte < 45 THEN 28
-      WHEN dte < 90 THEN 55
-      WHEN dte < 180 THEN 82
-      WHEN dte <= 540 THEN 100
-      WHEN dte <= 900 THEN 78
-      ELSE 58
-    END) * 0.30
+  WHEN delta IS NULL OR theta IS NULL OR dte IS NULL OR last IS NULL OR open_interest IS NULL OR estimated_premium IS NULL
+    OR last <= 0 OR dte < 0 OR open_interest <= 0 OR estimated_premium <= 0 OR abs(delta) > 1.05 THEN NULL
+  ELSE round((100 * (
+    exp(-(ln(greatest(dte, 0.5) / 300.0) ^ 2) / 0.98) * 0.18
+    + exp(-((least(abs(delta), 1) - 0.5) ^ 2) / 0.0648) * 0.16
+    + exp(-(abs(theta) / last) / 0.008) * 0.14
     + (CASE
-      WHEN LEAST(abs(delta), 1) <= 0.15 THEN 10 + (LEAST(abs(delta), 1) / 0.15) * 15
-      WHEN LEAST(abs(delta), 1) <= 0.35 THEN 25 + ((LEAST(abs(delta), 1) - 0.15) / 0.2) * 55
-      WHEN LEAST(abs(delta), 1) <= 0.5 THEN 80 + ((LEAST(abs(delta), 1) - 0.35) / 0.15) * 20
-      WHEN LEAST(abs(delta), 1) <= 0.65 THEN 100 - ((LEAST(abs(delta), 1) - 0.5) / 0.15) * 20
-      WHEN LEAST(abs(delta), 1) <= 0.85 THEN 80 - ((LEAST(abs(delta), 1) - 0.65) / 0.2) * 50
-      ELSE 30 - ((LEAST(abs(delta), 1) - 0.85) / 0.15) * 18
-    END) * 0.30
-    + (CASE
-      WHEN theta = 0 THEN 40
-      WHEN abs(theta) / last <= 0.0015 THEN 100
-      WHEN abs(theta) / last <= 0.004 THEN 100 - ((abs(theta) / last - 0.0015) / 0.0025) * 20
-      WHEN abs(theta) / last <= 0.008 THEN 80 - ((abs(theta) / last - 0.004) / 0.004) * 25
-      WHEN abs(theta) / last <= 0.015 THEN 55 - ((abs(theta) / last - 0.008) / 0.007) * 30
-      ELSE 12
-    END) * 0.25
-    + (CASE
-      WHEN last < 0.5 THEN 15
-      WHEN underlying_price IS NULL OR underlying_price <= 0 THEN CASE WHEN last >= 1 THEN 70 ELSE 30 END
-      WHEN last / underlying_price < 0.01 THEN 20
-      WHEN last / underlying_price < 0.03 THEN 55
-      WHEN last / underlying_price <= 0.20 THEN 100
-      WHEN last / underlying_price <= 0.40 THEN 68
-      ELSE 30
-    END) * 0.15
-  ))::int
+        WHEN underlying_price IS NULL OR underlying_price <= 0 THEN 0.55 * (1 - exp(-last / 1.25))
+        ELSE exp(-(ln((last / underlying_price) / 0.10) ^ 2) / 0.98) * (1 - exp(-last / 1.25))
+      END) * 0.10
+    + (1 - exp(-open_interest / 800.0)) * 0.14
+    + exp(-(ln((greatest(coalesce(volume_oi_ratio, 0), 0) + 0.05) / 2.5) ^ 2) / 1.445) * 0.14
+    + (1 - exp(-(ln(greatest(estimated_premium, 500000) / 500000.0) / 2.2))) * 0.14
+  )))::int
 END`;
 
 export function isUnusualContract(
