@@ -223,6 +223,14 @@ export const selectionScoreSql = `CASE
   )))::int
 END`;
 
+export function progressMove(first: number | null, latest: number | null): "up" | "down" | "flat" | null {
+  if (first == null || latest == null) return null;
+  if (!Number.isFinite(first) || !Number.isFinite(latest)) return null;
+  if (latest > first) return "up";
+  if (latest < first) return "down";
+  return "flat";
+}
+
 export function isUnusualContract(
   volume: number | null,
   openInterest: number | null,

@@ -4,7 +4,10 @@ import { dateTimeInNewYork, todayInNewYork } from "./domain.js";
 import {
   countVisibleContracts,
   getLastUpdatedAt,
+  listWatchedSymbols,
   markScanFinished,
+  recordWatchProgress,
+  publishSweepProgress,
   releaseSweep,
   rememberSavedSweep,
   removeExpiredContracts,
@@ -156,6 +159,15 @@ async function run(
   log: (message: string) => void,
 ): Promise<void> {
   await removeExpiredContracts(todayInNewYork());
+  await publishSweepProgress({
+    running: true,
+    scanned: status.scanned,
+    total: status.total,
+    errors: status.errors,
+    phase: status.phase,
+    current: status.current,
+  });
+  let watched = new Set(await listWatchedSymbols());
   let cursor = 0;
   const inflight = new Set<string>();
   const publishCurrent = () => {
@@ -189,6 +201,8 @@ async function run(
           try {
             await upsertContracts(chain.unusual, symbol.ticker, symbol.inSp500, symbol.inNasdaq, scanId, watermark);
             await removeSettledContracts(symbol.ticker, chain.stillOpen);
+            const mine = chain.quotes.filter((quote) => watched.has(quote.optionSymbol));
+            if (mine.length > 0) await recordWatchProgress(mine);
             const visible = await countVisibleContracts();
             status.unusual = visible.count;
           } catch {
@@ -201,7 +215,16 @@ async function run(
         publishCurrent();
       }
       if (!stopRequested && status.scanned % 25 === 0) {
+        watched = new Set(await listWatchedSymbols());
         await touchSweep();
+        await publishSweepProgress({
+          running: true,
+          scanned: status.scanned,
+          total: status.total,
+          errors: status.errors,
+          phase: status.phase,
+          current: status.current,
+        });
         log(`scan ${status.scanned}/${status.total} unusual=${status.unusual} errors=${status.errors}`);
       }
       if (!stopRequested) await sleep(120);
@@ -213,6 +236,14 @@ async function run(
     status.running = false;
     status.finishedAt = new Date().toISOString();
     stopRequested = false;
+    await publishSweepProgress({
+      running: false,
+      scanned: status.scanned,
+      total: status.total,
+      errors: status.errors,
+      phase: "refresh",
+      current: [],
+    });
     log(`scan stopped at ${status.scanned}/${status.total}`);
     return;
   }

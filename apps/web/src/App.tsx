@@ -60,6 +60,33 @@ type Suggestion = {
   exchange: string;
 };
 
+type PositionLevel = {
+  first: number | null;
+  latest: number | null;
+  move: "up" | "down" | "flat" | null;
+};
+
+type PositionReading = {
+  capturedAt: string;
+  openInterest: number | null;
+  volume: number | null;
+  last: number | null;
+};
+
+type Position = {
+  optionSymbol: string;
+  ticker: string;
+  optionType: "call" | "put";
+  strike: number | null;
+  expiration: string | null;
+  addedAt: string;
+  stillListed: boolean;
+  openInterest: PositionLevel;
+  volume: PositionLevel;
+  last: PositionLevel;
+  readings: PositionReading[];
+};
+
 const PAGE_SIZES = [25, 50, 100, 250];
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
@@ -142,6 +169,9 @@ export function App() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [refreshNote, setRefreshNote] = useState<string | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [positionNote, setPositionNote] = useState<string | null>(null);
+  const [closing, setClosing] = useState<string | null>(null);
   const hosted = false;
   const hostedBoard = useHostedBoard(hosted, state);
 
@@ -299,6 +329,59 @@ export function App() {
   }
 
   const [stopping, setStopping] = useState(false);
+  const watchedSymbols = new Set(positions.map((position) => position.optionSymbol));
+
+  useEffect(() => {
+    let ignore = false;
+    const load = () => {
+      fetch("/api/positions")
+        .then((response) => response.json())
+        .then((body: { rows?: Position[] }) => {
+          if (!ignore) setPositions(body.rows ?? []);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const timer = window.setInterval(load, 30_000);
+    return () => {
+      ignore = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  async function followContract(row: Contract) {
+    if (watchedSymbols.has(row.optionSymbol)) {
+      setPositionNote("Ese contrato ya está en Mis operativas.");
+      document.getElementById("operativas")?.scrollIntoView({ block: "start" });
+      return;
+    }
+    setPositionNote(null);
+    const response = await fetch("/api/positions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ optionSymbol: row.optionSymbol }),
+    });
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) {
+      setPositionNote(body?.error ?? "No pude guardar el contrato.");
+      return;
+    }
+    const listed = (await fetch("/api/positions").then((item) => item.json())) as { rows?: Position[] };
+    setPositions(listed.rows ?? []);
+    setPositionNote("Contrato guardado en Mis operativas.");
+    document.getElementById("operativas")?.scrollIntoView({ block: "start" });
+  }
+
+  async function closePosition(optionSymbol: string) {
+    const response = await fetch(`/api/positions/${encodeURIComponent(optionSymbol)}`, { method: "DELETE" });
+    if (!response.ok) {
+      setPositionNote("No pude quitar el contrato.");
+      return;
+    }
+    setPositions((current) => current.filter((position) => position.optionSymbol !== optionSymbol));
+    setClosing(null);
+    setPositionNote("Dejé de guardar ese contrato.");
+  }
 
   useEffect(() => {
     if (!stopping || !status || status.scan.running) return;
@@ -309,17 +392,18 @@ export function App() {
   async function refreshAll() {
     setRefreshNote(null);
     const response = await fetch("/api/scan", { method: "POST" });
+    const body = (await response.json().catch(() => null)) as { started?: boolean; running?: boolean; busy?: boolean; error?: string; message?: string } | null;
     if (!response.ok) {
-      setRefreshNote("No pude iniciar la actualización.");
+      setRefreshNote(body?.error ?? "No pude iniciar la actualización.");
       return;
     }
-    const body = (await response.json()) as { started?: boolean; running?: boolean; busy?: boolean };
-    if (body.busy) {
-      setRefreshNote("Ya hay una actualización en curso.");
+    if (body?.busy) {
+      setRefreshNote(body.message ?? "Ya hay una actualización en curso.");
       return;
     }
+    if (body?.message) setRefreshNote(body.message);
     setStopping(false);
-    if (body.running) {
+    if (body?.running) {
       setStatus((current) => current ? {
         ...current,
         scan: {
@@ -464,6 +548,14 @@ export function App() {
 
       <FlowRead ticker={state.q} bias={state.q ? bias : null} />
 
+      <Positions
+        rows={positions}
+        note={positionNote}
+        closing={closing}
+        onClosing={setClosing}
+        onClose={(optionSymbol) => void closePosition(optionSymbol)}
+      />
+
       {shownError && <p className="banner">{shownError}</p>}
 
       <div className="workspace">
@@ -472,8 +564,8 @@ export function App() {
           <p>{shownTotal === 0 ? "0 contratos" : `${start.toLocaleString("en-US")}–${end.toLocaleString("en-US")} de ${shownTotal.toLocaleString("en-US")}`}</p>
           <p className="sort-hint">
             {state.quiet
-              ? "Un clic ordena solo esa columna. Estás viendo las filas sin la marca amarilla."
-              : "Un clic ordena solo esa columna. Otro clic en otra columna reemplaza el orden. Las filas del día siguen primero."}
+              ? "Un clic en el encabezado ordena solo esa columna. Un clic en la fila guarda el contrato en Mis operativas. Estás viendo las filas sin la marca amarilla."
+              : "Un clic en el encabezado ordena solo esa columna. Un clic en la fila guarda el contrato en Mis operativas. Las filas del día siguen primero."}
           </p>
           <label>
             Filas
@@ -510,12 +602,18 @@ export function App() {
             </thead>
             <tbody>
               {shownRows.map((row) => (
-                <tr key={row.id} className={row.dayUnusual ? "day-unusual" : undefined}>
+                <tr
+                  key={row.id}
+                  className={[row.dayUnusual ? "day-unusual" : "", watchedSymbols.has(row.optionSymbol) ? "watched" : ""].filter(Boolean).join(" ") || undefined}
+                  onClick={() => void followContract(row)}
+                  title={watchedSymbols.has(row.optionSymbol) ? "Este contrato ya está en Mis operativas." : "Clic para guardar este contrato en Mis operativas."}
+                >
                   <td className="when" title="Último trade de este contrato, hora del Este">{formatOccurred(row.occurredAt)}</td>
                   <td className="ticker">
-                    <button type="button" className="ticker-btn" onClick={() => chooseAsset(row.ticker)}>
+                    <button type="button" className="ticker-btn" onClick={(event) => { event.stopPropagation(); chooseAsset(row.ticker); }}>
                       {row.ticker}
                     </button>
+                    {watchedSymbols.has(row.optionSymbol) ? <span className="bought">Comprado</span> : null}
                   </td>
                   <td className={row.optionType}>{row.optionType === "call" ? "CALL" : "PUT"}</td>
                   <td className="num">{formatPrice(row.strike)}</td>
@@ -734,6 +832,117 @@ function FlowCard({
       </p>
     </article>
   );
+}
+
+function Positions({
+  rows,
+  note,
+  closing,
+  onClosing,
+  onClose,
+}: {
+  rows: Position[];
+  note: string | null;
+  closing: string | null;
+  onClosing: (optionSymbol: string | null) => void;
+  onClose: (optionSymbol: string) => void;
+}) {
+  return (
+    <section className="positions" id="operativas" aria-label="Mis operativas">
+      <div className="positions-head">
+        <h2>Mis operativas</h2>
+        <p>
+          Un clic en una fila guarda ese contrato como comprado. Desde ahí comparo el open interest, el volumen del día y el último precio con la primera lectura.
+          El volumen es el negociado ese día, no un acumulado. Cuando cierres la posición, quítalo y dejo de guardar su progreso.
+        </p>
+      </div>
+      {note && <p className="refresh-note">{note}</p>}
+      {rows.length === 0 ? (
+        <p className="positions-empty">Todavía no hay contratos guardados.</p>
+      ) : (
+        <div className="position-list">
+          {rows.map((row) => (
+            <article key={row.optionSymbol} className="position">
+              <header>
+                <strong>{row.ticker}</strong>
+                <span className={row.optionType}>{row.optionType === "call" ? "CALL" : "PUT"}</span>
+                <span>{formatPrice(row.strike)}</span>
+                <span>{formatExpiration(row.expiration)}</span>
+              </header>
+              <p className="position-when">Guardado {formatOccurred(row.addedAt)}</p>
+              {!row.stillListed && <p className="position-gone">Ya no aparece en la cadena abierta. El progreso guardado sigue aquí hasta que lo quites.</p>}
+              <ul>
+                <ProgressLine label="Último precio" level={row.last} format={formatPrice} reading={priceReading(row.last.move)} />
+                <ProgressLine label="Open interest" level={row.openInterest} format={formatNumber} reading={oiReading(row.openInterest.move)} />
+                <ProgressLine label="Volumen del día" level={row.volume} format={formatNumber} reading={volumeReading(row.volume.move)} />
+              </ul>
+              {row.readings.length > 1 && (
+                <ol className="readings">
+                  {row.readings.map((reading) => (
+                    <li key={reading.capturedAt}>
+                      <span>{formatOccurred(reading.capturedAt)}</span>
+                      <span>OI {formatNumber(reading.openInterest)}</span>
+                      <span>Vol {formatNumber(reading.volume)}</span>
+                      <span>{formatPrice(reading.last)}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {row.readings.length < 2 && <p className="position-wait">Todavía hay una sola lectura. El próximo barrido la compara con esta.</p>}
+              {closing === row.optionSymbol ? (
+                <div className="position-actions">
+                  <button type="button" className="stop" onClick={() => onClose(row.optionSymbol)}>Confirmar y dejar de guardar</button>
+                  <button type="button" className="clear" onClick={() => onClosing(null)}>Cancelar</button>
+                </div>
+              ) : (
+                <button type="button" className="clear" onClick={() => onClosing(row.optionSymbol)}>Quitar de mis operativas</button>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProgressLine({
+  label,
+  level,
+  format,
+  reading,
+}: {
+  label: string;
+  level: PositionLevel;
+  format: (value: number | null) => string;
+  reading: string;
+}) {
+  const same = level.first == null || level.latest == null || level.first === level.latest;
+  return (
+    <li className={level.move === "up" ? "move-up" : level.move === "down" ? "move-down" : ""}>
+      <span>{label}</span>
+      <strong>{same ? format(level.latest) : `${format(level.first)} → ${format(level.latest)}`}</strong>
+      <em>{reading}</em>
+    </li>
+  );
+}
+
+function priceReading(move: PositionLevel["move"]): string {
+  if (move === "up") return "Se está valorizando.";
+  if (move === "down") return "Se está devaluando.";
+  if (move === "flat") return "El precio sigue igual.";
+  return "Sin precio para comparar.";
+}
+
+function oiReading(move: PositionLevel["move"]): string {
+  if (move === "up") return "El open interest está aumentando.";
+  if (move === "down") return "El open interest está disminuyendo.";
+  return "El open interest sigue igual.";
+}
+
+function volumeReading(move: PositionLevel["move"]): string {
+  if (move === "up") return "El volumen de hoy está más alto.";
+  if (move === "down") return "El volumen de hoy está más bajo.";
+  return "El volumen de hoy sigue igual.";
 }
 
 function ScanProgress({

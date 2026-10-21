@@ -1,4 +1,4 @@
-import { countVisibleContracts, getLastUpdatedAt } from "../../apps/api/src/neon.js";
+import { countVisibleContracts, getLastUpdatedAt, getRemoteScan } from "../../apps/api/src/neon.js";
 import directory from "../securities-directory.json" with { type: "json" };
 
 export async function GET(): Promise<Response> {
@@ -6,6 +6,7 @@ export async function GET(): Promise<Response> {
     const activity = await countVisibleContracts();
     const lastUpdatedAt = await getLastUpdatedAt();
     const total = directory.length;
+    const scan = await getRemoteScan(total);
     return Response.json({
       securityCount: total,
       provider: "Cboe delayed quotes",
@@ -14,16 +15,16 @@ export async function GET(): Promise<Response> {
       lastOccurredAt: activity.last,
       lastUpdatedAt,
       scan: {
-        running: false,
-        scanned: total,
-        total,
+        running: scan.running,
+        scanned: scan.scanned,
+        total: scan.total,
         unusual: activity.count,
-        errors: 0,
-        current: [],
-        startedAt: null,
-        finishedAt: null,
+        errors: scan.errors,
+        current: scan.current,
+        startedAt: scan.startedAt,
+        finishedAt: scan.finishedAt,
         source: "cboe-delayed-quotes",
-        phase: "saved",
+        phase: scan.phase,
       },
     });
   } catch {

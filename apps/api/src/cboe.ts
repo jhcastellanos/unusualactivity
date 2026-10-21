@@ -36,10 +36,18 @@ type ChainContract = {
   theta?: number;
 };
 
+export type ChainQuote = {
+  optionSymbol: string;
+  openInterest: number | null;
+  volume: number | null;
+  last: number | null;
+};
+
 export type OptionChain = {
   complete: boolean;
   unusual: UnusualContract[];
   stillOpen: string[];
+  quotes: ChainQuote[];
 };
 
 export async function fetchOptionChain(ticker: string, signal?: AbortSignal): Promise<OptionChain> {
@@ -47,7 +55,7 @@ export async function fetchOptionChain(ticker: string, signal?: AbortSignal): Pr
     headers: { "User-Agent": "unusualactivity-personal/0.1" },
     signal: signal ? AbortSignal.any([AbortSignal.timeout(20_000), signal]) : AbortSignal.timeout(20_000),
   });
-  if (response.status === 404) return { complete: false, unusual: [], stillOpen: [] };
+  if (response.status === 404) return { complete: false, unusual: [], stillOpen: [], quotes: [] };
   if (!response.ok) {
     if (response.status === 429 || response.status === 503) {
       await response.arrayBuffer().catch(() => undefined);
@@ -59,11 +67,12 @@ export async function fetchOptionChain(ticker: string, signal?: AbortSignal): Pr
   }
   const payload = (await response.json()) as { data?: { current_price?: number; options?: ChainContract[] } };
   const options = payload.data?.options;
-  if (!options) return { complete: false, unusual: [], stillOpen: [] };
+  if (!options) return { complete: false, unusual: [], stillOpen: [], quotes: [] };
   const today = todayInNewYork();
   const underlyingPrice = numberOrNull(payload.data?.current_price);
   const unusual: UnusualContract[] = [];
   const stillOpen: string[] = [];
+  const quotes: ChainQuote[] = [];
   for (const contract of options) {
     if (!contract.option) continue;
     const parsed = parseOptionSymbol(contract.option);
@@ -74,6 +83,7 @@ export async function fetchOptionChain(ticker: string, signal?: AbortSignal): Pr
     const bid = numberOrNull(contract.bid);
     const ask = numberOrNull(contract.ask);
     const last = numberOrNull(contract.last_trade_price);
+    quotes.push({ optionSymbol: contract.option, openInterest, volume, last });
     const occurredAt = contract.last_trade_time ?? null;
     if (
       !isSizedOpenContract({
@@ -110,7 +120,7 @@ export async function fetchOptionChain(ticker: string, signal?: AbortSignal): Pr
       source: SOURCE,
     });
   }
-  return { complete: true, unusual, stillOpen };
+  return { complete: true, unusual, stillOpen, quotes };
 }
 
 export async function fetchUnusualContracts(ticker: string): Promise<UnusualContract[]> {

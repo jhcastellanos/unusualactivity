@@ -5,7 +5,7 @@ import Fastify from "fastify";
 import { openDatabase, replaceSecurities } from "./db.js";
 import { loadSecurityUniverse } from "./symbols.js";
 import { adoptSavedScan, getScanStatus, startUnusualScan, stopUnusualScan, SWEEP_INTERVAL_MS } from "./scan.js";
-import { countVisibleContracts, getLastUpdatedAt, listActivity, migrateNeon, tickerFlow } from "./neon.js";
+import { addPosition, consumeSweepCommand, countVisibleContracts, getLastUpdatedAt, isPositionSymbol, listActivity, listPositions, markSweeperAlive, migrateNeon, removePosition, tickerFlow } from "./neon.js";
 import { tickerNews } from "./news.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -177,6 +177,27 @@ function emptyWindow() {
   return { lean: "sin_flujo", callPremium: 0, putPremium: 0, callContracts: 0, putContracts: 0 };
 }
 
+app.get("/api/positions", async () => {
+  return { rows: await listPositions() };
+});
+
+app.post("/api/positions", async (request, reply) => {
+  const body = request.body as { optionSymbol?: string } | null;
+  const optionSymbol = (body?.optionSymbol ?? "").trim().toUpperCase();
+  if (!isPositionSymbol(optionSymbol)) return reply.code(400).send({ error: "Ese contrato no es válido." });
+  const result = await addPosition(optionSymbol);
+  if (result === "missing") return reply.code(404).send({ error: "Ese contrato no está en la lista guardada." });
+  return { added: result === "added", optionSymbol };
+});
+
+app.delete("/api/positions/:optionSymbol", async (request, reply) => {
+  const optionSymbol = ((request.params as { optionSymbol?: string }).optionSymbol ?? "").trim().toUpperCase();
+  if (!isPositionSymbol(optionSymbol)) return reply.code(400).send({ error: "Ese contrato no es válido." });
+  const removed = await removePosition(optionSymbol);
+  if (!removed) return reply.code(404).send({ error: "Ese contrato no está en tus operativas." });
+  return { removed: true, optionSymbol };
+});
+
 app.get("/api/activity", async (request) => {
   const query = request.query as Record<string, string | undefined>;
   const page = clampInt(query.page, 1, 10_000);
@@ -238,3 +259,12 @@ const universe = db.prepare("SELECT COUNT(*) AS count FROM securities").get() as
 await adoptSavedScan(universe.count);
 startUnusualScan(db, logScan);
 setInterval(() => startUnusualScan(db, logScan), SWEEP_INTERVAL_MS);
+setInterval(() => {
+  void markSweeperAlive()
+    .then(() => consumeSweepCommand())
+    .then((command) => {
+      if (command === "stop") stopUnusualScan();
+      if (command === "start") void startUnusualScan(db, logScan, true);
+    })
+    .catch((error: unknown) => app.log.error({ message: error instanceof Error ? error.message : "sweep" }, "remote sweep follow failed"));
+}, 5_000);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysToExpiration, estimatedPremium, flowLean, isDayUnusualVolume, isSizedOpenContract, isUnusualContract, parseOptionSymbol, qualifyingPremium, remainsOpen, selectionScore, summarizeFlow, volumeOiRatio } from "./domain.ts";
+import { daysToExpiration, estimatedPremium, flowLean, isDayUnusualVolume, isSizedOpenContract, isUnusualContract, parseOptionSymbol, progressMove, qualifyingPremium, remainsOpen, selectionScore, summarizeFlow, volumeOiRatio } from "./domain.ts";
 
 describe("selectionScore", () => {
   const positioned = { openInterest: 2_000, volumeOiRatio: 3, estimatedPremium: 8_000_000 };
@@ -35,6 +35,15 @@ describe("selectionScore", () => {
 
   it("returns null when Cboe did not send the greeks", () => {
     expect(selectionScore({ delta: null, theta: null, dte: 162, last: 7.3, underlyingPrice: 79.3, ...positioned })).toBeNull();
+  });
+});
+
+describe("progressMove", () => {
+  it("reads an increase, a decrease, and a flat reading", () => {
+    expect(progressMove(100, 140)).toBe("up");
+    expect(progressMove(18.5, 16.2)).toBe("down");
+    expect(progressMove(8, 8)).toBe("flat");
+    expect(progressMove(null, 8)).toBeNull();
   });
 });
 

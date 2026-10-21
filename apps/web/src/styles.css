@@ -292,7 +292,92 @@ th button {
   text-transform: inherit;
   white-space: nowrap;
 }
+tbody tr[title] { cursor: pointer; }
 tbody tr:hover { background: var(--bg-hover); }
+tbody tr.watched { box-shadow: inset 4px 0 0 var(--accent); }
+.bought {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #ffffff;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+}
+.positions {
+  margin: 0 0 18px;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.positions-head h2 {
+  margin: 0 0 6px;
+  font-family: "Iowan Old Style", Palatino, Georgia, serif;
+  font-size: 28px;
+  font-weight: 500;
+}
+.positions-head p, .positions-empty, .position-when, .position-wait, .position-gone {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.position-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.position {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f7f9fb;
+}
+.position header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+.position header strong {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+}
+.position ul {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+.position li {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 8px;
+}
+.position li strong { font-variant-numeric: tabular-nums; }
+.position li em { font-style: normal; color: var(--muted); font-size: 13px; }
+.move-up em { color: var(--up); }
+.move-down em { color: var(--down); }
+.readings {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  max-height: 160px;
+  overflow: auto;
+}
+.readings li {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr 0.8fr;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.position-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.position-gone { margin-top: 8px; color: var(--neutral); }
 tbody tr.day-unusual {
   background: #ffe08a;
   box-shadow: inset 4px 0 0 #c48400;
