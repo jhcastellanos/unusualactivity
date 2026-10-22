@@ -1,15 +1,10 @@
-import { requestRemoteStop } from "../../apps/api/src/neon.js";
+import { stopProductionSweep } from "../../apps/api/src/production-sweep.js";
 
 export async function POST(): Promise<Response> {
   try {
-    const { online, running } = await requestRemoteStop();
-    if (!running && !online) {
-      return Response.json(
-        { stopping: false, error: "El equipo que barre los activos está apagado." },
-        { status: 409 },
-      );
-    }
-    return Response.json({ stopping: running });
+    const stopping = await stopProductionSweep();
+    if (!stopping) return Response.json({ stopping: false });
+    return Response.json({ stopping: true });
   } catch {
     return Response.json({ stopping: false, error: "No pude parar la actualización." }, { status: 500 });
   }

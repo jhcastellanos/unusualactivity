@@ -389,6 +389,21 @@ export function App() {
     setRefreshNote("Actualización detenida.");
   }, [stopping, status]);
 
+  useEffect(() => {
+    if (!status?.scan.running) return;
+    let cancel = false;
+    const kick = () => {
+      if (cancel) return;
+      void fetch("/api/scan/step", { method: "POST" }).catch(() => undefined);
+    };
+    kick();
+    const timer = window.setInterval(kick, 4_000);
+    return () => {
+      cancel = true;
+      window.clearInterval(timer);
+    };
+  }, [status?.scan.running]);
+
   async function refreshAll() {
     setRefreshNote(null);
     const response = await fetch("/api/scan", { method: "POST" });

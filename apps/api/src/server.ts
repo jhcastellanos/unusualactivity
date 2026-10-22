@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { openDatabase, replaceSecurities } from "./db.js";
 import { loadSecurityUniverse } from "./symbols.js";
-import { adoptSavedScan, getScanStatus, startUnusualScan, stopUnusualScan, SWEEP_INTERVAL_MS } from "./scan.js";
-import { addPosition, consumeSweepCommand, countVisibleContracts, getLastUpdatedAt, isPositionSymbol, listActivity, listPositions, markSweeperAlive, migrateNeon, removePosition, tickerFlow } from "./neon.js";
+import { adoptSavedScan, getScanStatus, startUnusualScan, stopUnusualScan } from "./scan.js";
+import { addPosition, countVisibleContracts, getLastUpdatedAt, isPositionSymbol, listActivity, listPositions, migrateNeon, removePosition, tickerFlow } from "./neon.js";
 import { tickerNews } from "./news.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -156,6 +156,11 @@ app.post("/api/scan/stop", async () => {
   return stopUnusualScan();
 });
 
+app.post("/api/scan/step", async () => {
+  const scan = getScanStatus();
+  return { running: scan.running, done: !scan.running, busy: scan.running, started: false, scanned: scan.scanned, total: scan.total };
+});
+
 app.get("/api/news", async (request, reply) => {
   const query = request.query as Record<string, string | undefined>;
   try {
@@ -253,18 +258,7 @@ try {
   app.log.error(error, "symbol sync failed; serving the last saved directory");
 }
 
-await app.listen({ port: PORT, host: "127.0.0.1" });
 const logScan = (message: string) => app.log.info(message);
+await app.listen({ port: PORT, host: "127.0.0.1" });
 const universe = db.prepare("SELECT COUNT(*) AS count FROM securities").get() as { count: number };
 await adoptSavedScan(universe.count);
-startUnusualScan(db, logScan);
-setInterval(() => startUnusualScan(db, logScan), SWEEP_INTERVAL_MS);
-setInterval(() => {
-  void markSweeperAlive()
-    .then(() => consumeSweepCommand())
-    .then((command) => {
-      if (command === "stop") stopUnusualScan();
-      if (command === "start") void startUnusualScan(db, logScan, true);
-    })
-    .catch((error: unknown) => app.log.error({ message: error instanceof Error ? error.message : "sweep" }, "remote sweep follow failed"));
-}, 5_000);

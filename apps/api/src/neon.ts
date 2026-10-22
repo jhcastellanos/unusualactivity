@@ -74,6 +74,8 @@ export async function migrateNeon(): Promise<void> {
   await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_current TEXT`);
   await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_started_at TIMESTAMPTZ`);
   await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_finished_at TIMESTAMPTZ`);
+  await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_cursor INTEGER NOT NULL DEFAULT 0`);
+  await db.query(`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS sweep_batch_open BOOLEAN NOT NULL DEFAULT FALSE`);
   await db.query(`INSERT INTO scan_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
   await db.query(`CREATE INDEX IF NOT EXISTS unusual_contracts_occurred_at ON unusual_contracts (occurred_at DESC)`);
   await db.query(`CREATE INDEX IF NOT EXISTS unusual_contracts_ticker ON unusual_contracts (ticker)`);

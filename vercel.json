@@ -2,5 +2,9 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install",
   "outputDirectory": "apps/web/dist",
-  "framework": null
+  "framework": null,
+  "functions": {
+    "api/scan/index.ts": { "maxDuration": 60 },
+    "api/scan/step.ts": { "maxDuration": 60 }
+  }
 }
